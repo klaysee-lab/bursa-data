@@ -49,3 +49,15 @@ GitHub Actions (09:10 UTC / 17:10 马时)  →  data/*.json
 ## 手动触发
 
 Actions 页 → Fetch Bursa prices → Run workflow。
+
+## template.html
+
+看板的**干净底稿**，数据位置留了四个占位符：`__DATA__`、`__DH__`、`__SNAP__`、`__PREVSIG__`。
+
+定时任务必须从这个模板重建页面，**不能拿读回来的成品当底稿**。原因是发布平台会在页面顶部注入约 36KB 的
+frame-runtime 前导码；用成品当底稿会把前导码一起烤进源码，于是：
+
+- `<title>` 被挤出发布时扫描标题的 8KB 窗口，看板在画廊里被改名成 "new_artifact"
+- 每跑一次就多一层，文件每天涨约 36KB
+
+2026-09-02 的首次真实运行就踩到了这个坑，已修。
