@@ -230,12 +230,22 @@ function chart(w,sig,W,H,big,mode,view,draws){
     g+=`<line x1="${padL}" y1="${y.toFixed(1)}" x2="${W-padR}" y2="${y.toFixed(1)}" stroke="var(--bd)" stroke-width=".6" opacity=".55"/>`;
     g+=`<text x="${W-padR+5}" y="${(y+3).toFixed(1)}" fill="var(--ink3)" font-size="${big?11:9.5}" font-family="var(--mono)">${v.toFixed(2)}</text>`;
   }
+  // Batch the candles into one <path> per direction. Two SVG nodes per bar means ~1000
+  // elements at 500 bars, which the browser re-parses and re-lays-out on every pan frame;
+  // four paths draw identically (bodies never overlap, wicks sit inside them) for ~1/40th
+  // the DOM. Bodies keep the 1px floor so a doji stays visible.
+  const wick={up:'',dn:''}, body={up:'',dn:''};
   s.forEach((b,i)=>{
-    const up=b[4]>=b[1],col=up?'var(--up)':'var(--dn)',x=X(i);
-    const yo=Y(b[1]),yc=Y(b[4]),yh=Y(b[2]),yl=Y(b[3]);
-    cs+=`<line x1="${x.toFixed(1)}" y1="${yh.toFixed(1)}" x2="${x.toFixed(1)}" y2="${yl.toFixed(1)}" stroke="${col}" stroke-width="${big?1.1:.8}"/>`;
-    cs+=`<rect x="${(x-cw/2).toFixed(1)}" y="${Math.min(yo,yc).toFixed(1)}" width="${cw.toFixed(1)}" height="${Math.max(1,Math.abs(yc-yo)).toFixed(1)}" fill="${col}"/>`;
+    const k=b[4]>=b[1]?'up':'dn', x=+X(i).toFixed(1);
+    const yo=Y(b[1]), yc=Y(b[4]);
+    wick[k]+=`M${x} ${Y(b[2]).toFixed(1)}V${Y(b[3]).toFixed(1)}`;
+    body[k]+=`M${(x-cw/2).toFixed(1)} ${Math.min(yo,yc).toFixed(1)}h${cw.toFixed(1)}v${Math.max(1,Math.abs(yc-yo)).toFixed(1)}h${(-cw).toFixed(1)}z`;
   });
+  for(const k of ['up','dn']){
+    const col=k==='up'?'var(--up)':'var(--dn)';
+    if(wick[k]) cs+=`<path d="${wick[k]}" stroke="${col}" stroke-width="${big?1.1:.8}" fill="none"/>`;
+    if(body[k]) cs+=`<path d="${body[k]}" fill="${col}"/>`;
+  }
 
   let an='';
   if(sig){
@@ -420,13 +430,14 @@ function clampView(){
   if(i0<0){ i0=0; i1=Math.min(b.length,n); }
   VIEW={i0,i1};
 }
-function zoomAt(fx,factor){          // fx = 0..1 horizontal position inside the plot
+function zoomAt(fx,factor,fast){          // fx = 0..1 horizontal position inside the plot
   const b=curBars(); if(!VIEW||!b.length) return;
   const n=VIEW.i1-VIEW.i0;
   const anchor=VIEW.i0+fx*n;                       // bar index under the cursor, kept in place
   let nn=Math.round(n*factor);
   nn=Math.max(MINBARS, Math.min(b.length, nn));
   VIEW={i0:anchor-fx*nn, i1:anchor-fx*nn+nn};
+  if(fast){ nudge(); return; }
   clampView(); drawModal();
 }
 function panBars(dBars){
@@ -435,7 +446,67 @@ function panBars(dBars){
   clampView(); drawModal();
 }
 
-function drawModal(){
+// ---- gestures ------------------------------------------------------------
+// Wheel + drag for a mouse, one-finger pan and two-finger pinch for a touchscreen
+// (which fires neither wheel nor mousedown, so without this the chart is frozen under
+// a finger). The window-scoped listeners are registered ONCE, for two reasons:
+//  · they used to sit inside open_(), so every card opened stacked another copy —
+//    after a dozen stocks a dozen handlers ran per mousemove;
+//  · drawModal() replaces the <svg> mid-gesture and touch events keep firing at the
+//    now-detached original target, so an element-scoped listener goes deaf after the
+//    first frame. window still hears them.
+let DRAG=null, TCH=null, RAF=0;
+const tDist=t=>Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
+const tMid =t=>(t[0].clientX+t[1].clientX)/2;
+function chartRect(){
+  const box=$('mchart'), svg=box&&box.querySelector('svg');
+  const r=svg&&svg.getBoundingClientRect();
+  return r&&r.width ? r : null;
+}
+const fxAt=(x,r)=>Math.max(0,Math.min(1,((x-r.left)/r.width*SC.W-SC.padL)/SC.pw));
+// One redraw per frame, and skip the toolbar rebuild while the finger is down: a full
+// drawModal() runs ~18ms on 500 bars, which a 120Hz touchmove stream easily outruns.
+function nudge(){
+  if(RAF) return;
+  RAF=requestAnimationFrame(()=>{ RAF=0; clampView(); drawModal(true); });
+}
+function endGesture(){
+  if(!DRAG&&!TCH) return;
+  DRAG=null; TCH=null;
+  const m=$('mchart'); if(m) m.style.cursor='';
+  drawModal();                                   // one full redraw to catch the chrome up
+}
+window.addEventListener('mousemove',e=>{
+  if(!DRAG) return;
+  const d=-(e.clientX-DRAG.x)*DRAG.perPx;
+  VIEW={i0:DRAG.i0+d, i1:DRAG.i1+d};
+  nudge();
+});
+window.addEventListener('mouseup',endGesture);
+window.addEventListener('touchmove',e=>{
+  if(!TCH||!SC||!VIEW) return;
+  const t=e.touches;
+  if(TCH.mode==='pinch' && t.length===2){
+    e.preventDefault();
+    const d=tDist(t); if(!d||!TCH.d0) return;
+    const fx=fxAt(tMid(t),TCH.r);
+    let nn=Math.round(TCH.n0*TCH.d0/d);          // fingers apart -> fewer bars -> zoom in
+    nn=Math.max(MINBARS,Math.min(curBars().length,nn));
+    VIEW={i0:TCH.anchor-fx*nn, i1:TCH.anchor-fx*nn+nn};
+    nudge();
+  }else if(TCH.mode==='pan' && t.length===1){
+    const dx=t[0].clientX-TCH.x;
+    if(Math.abs(dx)<3) return;                   // let a tap stay a tap
+    e.preventDefault();
+    VIEW={i0:TCH.i0-dx*TCH.perPx, i1:TCH.i1-dx*TCH.perPx};
+    nudge();
+  }
+},{passive:false});
+window.addEventListener('touchend',e=>{ if(!e.touches.length) endGesture(); });
+window.addEventListener('touchcancel',endGesture);
+
+
+function drawModal(fast){
   const d=ROWS[MI], s=d.sig, bars=barsFor(d,MTF), box=$('mchart');
   if(!bars||!bars.length){ box.innerHTML=`<p class="note">该周期没有可用数据。</p>`; SC=null; return; }
   if(!VIEW) resetView(); else clampView();
@@ -450,6 +521,7 @@ function drawModal(){
   $('mhint').innerHTML = hit
     ? `${tfN} · 显示 ${shown}/${bars.length} 根K线${MTF==='w'?`，涵盖「跌破前低 → 打底 ${s.base} 周 → 翻转站上支撑」`:'，破/翻标记已对应到该周内的具体K线'} · ${nav}`
     : `${tfN} · 显示 ${shown}/${bars.length} 根K线。破/翻不在当前视野内（本次在 ${s.ago} 周前${VIEW.i0>0?'，可向左拖或缩小':`，${tfN}数据仅${cover}`}），故只画出支撑价位参考线 · ${nav}`;
+  if(fast) return;   // a pan/zoom changes none of the chrome below
   document.querySelectorAll('#mtf button[data-tf]').forEach(b=>b.classList.toggle('on',b.dataset.tf===MTF));
   // rebuild the range group for the current timeframe, greying out any option the data can't fill
   const rg=$('mrg');
@@ -559,74 +631,33 @@ function open_(i){
   const mc=$('mchart');
   mc.addEventListener('click',onChartClick);
   mc.addEventListener('dblclick',()=>{ resetView(); drawModal(); });
+  // Only the element-scoped half lives here — #mchart is rebuilt by every open_(), so
+  // its listeners go with it. The window-scoped half is registered once, up top.
   mc.addEventListener('wheel',e=>{
     if(!SC) return;
     e.preventDefault();
-    const svg=mc.querySelector('svg'); if(!svg) return;
-    const r=svg.getBoundingClientRect(); if(!r.width) return;
-    const vx=(e.clientX-r.left)/r.width*SC.W;
-    const fx=Math.max(0,Math.min(1,(vx-SC.padL)/SC.pw));
-    zoomAt(fx, e.deltaY>0 ? 1.18 : 1/1.18);
+    const r=chartRect(); if(!r) return;
+    zoomAt(fxAt(e.clientX,r), e.deltaY>0 ? 1.18 : 1/1.18, true);
   },{passive:false});
-  let drag=null;
   mc.addEventListener('mousedown',e=>{
-    if(MTOOL||!SC) return;                       // drawing mode owns the mouse
-    const svg=mc.querySelector('svg'); if(!svg) return;
-    const r=svg.getBoundingClientRect(); if(!r.width) return;
-    drag={x:e.clientX, i0:VIEW.i0, i1:VIEW.i1, perPx:(VIEW.i1-VIEW.i0)/(r.width*(SC.pw/SC.W))};
+    if(MTOOL||!SC||!VIEW) return;                // drawing mode owns the mouse
+    const r=chartRect(); if(!r) return;
+    DRAG={x:e.clientX, i0:VIEW.i0, i1:VIEW.i1, perPx:(VIEW.i1-VIEW.i0)/(r.width*(SC.pw/SC.W))};
     mc.style.cursor='grabbing';
   });
-  window.addEventListener('mousemove',e=>{
-    if(!drag) return;
-    const d=-(e.clientX-drag.x)*drag.perPx;
-    VIEW={i0:drag.i0+d, i1:drag.i1+d};
-    clampView(); drawModal();
-  });
-  window.addEventListener('mouseup',()=>{ if(drag){ drag=null; const m=$('mchart'); if(m) m.style.cursor=''; } });
-  // ---- touch: one finger pans, two fingers pinch-zoom ----------------------
-  // A touchscreen fires no wheel and no mousedown-drag, so without this the chart is
-  // frozen under a finger. Listen on window, not mc: drawModal() replaces the <svg>
-  // mid-gesture, and touch events keep firing at the (now detached) original target.
-  let tch=null;
-  const tDist=t=>Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
-  const tMid =t=>(t[0].clientX+t[1].clientX)/2;
-  const tFx  =(x,r)=>Math.max(0,Math.min(1,((x-r.left)/r.width*SC.W-SC.padL)/SC.pw));
   mc.addEventListener('touchstart',e=>{
-    tch=null;
+    TCH=null;
     if(!SC||!VIEW) return;
-    const svg=mc.querySelector('svg'); if(!svg) return;
-    const r=svg.getBoundingClientRect(); if(!r.width) return;
+    const r=chartRect(); if(!r) return;
     const t=e.touches, n=VIEW.i1-VIEW.i0;
     if(t.length===2){
       e.preventDefault();
-      const fx=tFx(tMid(t),r);
-      tch={mode:'pinch', r:r, d0:tDist(t), n0:n, anchor:VIEW.i0+fx*n};
-    }else if(t.length===1 && !MTOOL){          // drawing mode owns single-finger taps
-      tch={mode:'pan', x:t[0].clientX, i0:VIEW.i0, i1:VIEW.i1,
-           perPx:n/(r.width*(SC.pw/SC.W))};
+      const fx=fxAt(tMid(t),r);
+      TCH={mode:'pinch', r:r, d0:tDist(t), n0:n, anchor:VIEW.i0+fx*n};
+    }else if(t.length===1 && !MTOOL){            // drawing mode owns single-finger taps
+      TCH={mode:'pan', x:t[0].clientX, i0:VIEW.i0, i1:VIEW.i1, perPx:n/(r.width*(SC.pw/SC.W))};
     }
   },{passive:false});
-  window.addEventListener('touchmove',e=>{
-    if(!tch||!SC||!VIEW) return;
-    const t=e.touches, len=curBars().length;
-    if(tch.mode==='pinch' && t.length===2){
-      e.preventDefault();
-      const d=tDist(t); if(!d||!tch.d0) return;
-      const fx=tFx(tMid(t),tch.r);
-      let nn=Math.round(tch.n0*tch.d0/d);      // fingers apart -> fewer bars -> zoom in
-      nn=Math.max(MINBARS,Math.min(len,nn));
-      VIEW={i0:tch.anchor-fx*nn, i1:tch.anchor-fx*nn+nn};
-      clampView(); drawModal();
-    }else if(tch.mode==='pan' && t.length===1){
-      const dx=t[0].clientX-tch.x;
-      if(Math.abs(dx)<3) return;                // let a tap stay a tap
-      e.preventDefault();
-      VIEW={i0:tch.i0-dx*tch.perPx, i1:tch.i1-dx*tch.perPx};
-      clampView(); drawModal();
-    }
-  },{passive:false});
-  window.addEventListener('touchend',e=>{ if(!e.touches.length) tch=null; });
-  window.addEventListener('touchcancel',()=>{ tch=null; });
 
   resetView();
   drawModal();
