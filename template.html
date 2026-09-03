@@ -101,7 +101,8 @@
   <div class="top">
     <div>
       <h1><span class="pre">MY</span>KLCI 周线「破底翻」监控 Dashboard</h1>
-      <p class="sub">跌破前低后打底数周、未再破新低，再明显拉回反转 — FBM KLCI 30 成分股周线扫描 · 数据来源 Yahoo Finance</p>
+      <p class="sub">跌破前低后打底数周、未再破新低，再明显拉回反转 — FBM KLCI 30 成分股周线扫描 · 数据来源 Yahoo Finance
+        <span class="mono" style="color:var(--ink3)">· 构建 <b id="build"></b></span></p>
     </div>
     <div class="ctrl">
       <div class="fld"><label>支撑观察周数</label><input type="number" id="p_sup" value="13" min="4" max="60"></div>
@@ -292,6 +293,7 @@ function chart(w,sig,W,H,big,mode,view,draws){
   return `<svg viewBox="0 0 ${W} ${H}">${g}${cs}${an}${dr}${xl}</svg>`;
 }
 
+const BUILD='0903-e';   // bump on every dashboard edit; shown top-left so a stale cache is obvious
 let ROWS=[];
 function render(){
   const p=P(), groups=[];
@@ -306,6 +308,7 @@ function render(){
     return a.n.localeCompare(b.n);
   });
 
+  if($('build')) $('build').textContent=BUILD;
   $('parms').textContent=`参数: 支撑观察 ${p.supportWeeks} 周 · 打底 ${p.minBase}-${p.maxBase} 周(容忍再深跌${p.tolPct}%) · 最小反弹 ${p.minReboundPct}% ·"刚发生"窗口 ${p.recentWeeks} 周 · 命中 ${ROWS.length}/${pool.length} 只`;
   // SNAP is a weekly bar's Monday, so label it as a week rather than letting it read as a cutoff.
   $('foot').innerHTML=`数据截至 ${SNAP} 起的那一周 · 覆盖 FBM KLCI 30 成分股与科技股 Top 30（共 ${DATA.length} 只，均已用参考价校验代码正确性）<br>`+
@@ -449,74 +452,97 @@ function panBars(dBars){
 }
 
 // ---- gestures ------------------------------------------------------------
-// Wheel + drag for a mouse, one-finger pan and two-finger pinch for a touchscreen
-// (which fires neither wheel nor mousedown, so without this the chart is frozen under
-// a finger). The window-scoped listeners are registered ONCE, for two reasons:
-//  · they used to sit inside open_(), so every card opened stacked another copy —
-//    after a dozen stocks a dozen handlers ran per mousemove;
-//  · drawModal() replaces the <svg> mid-gesture and touch events keep firing at the
-//    now-detached original target, so an element-scoped listener goes deaf after the
-//    first frame. window still hears them.
-let DRAG=null, TCH=null, RAF=0;
-const tDist=t=>Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
-const tMid =t=>(t[0].clientX+t[1].clientX)/2;
+// Pointer Events, not touch events. A touchscreen is a first-class pointer on every
+// current browser, and one code path then covers finger, pen and mouse alike. The
+// reason it matters: if the browser declines to synthesise touch events for a device,
+// the page falls back to *compatibility* mouse events, which are only dispatched once
+// the touch sequence has ended — the finger moves, nothing happens, then it jumps.
+// pointerdown/move fire immediately regardless of input type, and setPointerCapture
+// keeps the stream coming even though drawModal() replaces the <svg> mid-gesture.
+// Registered ONCE at module scope: these used to sit inside open_(), so every card
+// opened stacked another permanent copy.
+const PTR=new Map();                 // live pointers: id -> {x,y}
+let GEST=null, RAF=0;
+// ?dbg=1 prints what actually fired, so a "feels slow" report can be measured
+// instead of guessed at: input type, ms from press to first movement, ms per move.
+const DBG=/[?&]dbg=1/.test(location.search);
+let dT=0,dN=0,dFirst=0,dKind='';
 function chartRect(){
   const box=$('mchart'), svg=box&&box.querySelector('svg');
   const r=svg&&svg.getBoundingClientRect();
   return r&&r.width ? r : null;
 }
 const fxAt=(x,r)=>Math.max(0,Math.min(1,((x-r.left)/r.width*SC.W-SC.padL)/SC.pw));
-// One redraw per frame, and skip the toolbar rebuild while the finger is down: a full
-// drawModal() runs ~18ms on 500 bars, which a 120Hz touchmove stream easily outruns.
+const twoPtr=()=>{ const a=[...PTR.values()]; return a.length>=2?[a[0],a[1]]:null; };
+const pDist=p=>Math.hypot(p[0].x-p[1].x,p[0].y-p[1].y);
+const pMid =p=>(p[0].x+p[1].x)/2;
+// One redraw per frame while dragging, and drawModal(true) skips the toolbar rebuild.
+// The first move of a gesture draws synchronously — a frame of wait there reads as lag.
 function nudge(now){
-  if(now){                                        // first move of a gesture: waiting a
-    if(RAF){ cancelAnimationFrame(RAF); RAF=0; }  // frame here is exactly what reads as lag
+  if(now){
+    if(RAF){ cancelAnimationFrame(RAF); RAF=0; }
     clampView(); drawModal(true); return;
   }
   if(RAF) return;
   RAF=requestAnimationFrame(()=>{ RAF=0; clampView(); drawModal(true); });
 }
+function startGesture(){
+  GEST=null;
+  const r=chartRect(); if(!r||!SC||!VIEW||!PTR.size) return;
+  const n=VIEW.i1-VIEW.i0, two=twoPtr();
+  if(two){
+    const fx=fxAt(pMid(two),r);
+    GEST={mode:'pinch', r:r, d0:pDist(two), n0:n, anchor:VIEW.i0+fx*n, moved:0};
+  }else if(!MTOOL){                    // drawing mode owns single-pointer taps
+    const p=[...PTR.values()][0], box=$('mchart').closest('.mbox');
+    GEST={mode:'pan', x:p.x, y:p.y, i0:VIEW.i0, i1:VIEW.i1,
+          perPx:n/(r.width*(SC.pw/SC.W)), box:box, top:box?box.scrollTop:0, axis:null, moved:0};
+  }
+}
 function endGesture(){
-  if(!DRAG&&!TCH) return;
-  DRAG=null; TCH=null;
+  if(!GEST&&!PTR.size) return;
+  GEST=null; PTR.clear();
   const m=$('mchart'); if(m) m.style.cursor='';
   drawModal();                                   // one full redraw to catch the chrome up
+  if(DBG&&dN) $('mhint').innerHTML+=` <b style="color:#e8b339">[dbg ${dKind} · 首动 ${dFirst}ms ·`
+    +` ${dN} 次移动 · ${Math.round((performance.now()-dT)/dN)}ms/次]</b>`;
+  dN=0;
 }
-window.addEventListener('mousemove',e=>{
-  if(!DRAG) return;
-  const d=-(e.clientX-DRAG.x)*DRAG.perPx;
-  VIEW={i0:DRAG.i0+d, i1:DRAG.i1+d};
-  nudge(!DRAG.moved); DRAG.moved=1;
-});
-window.addEventListener('mouseup',endGesture);
-window.addEventListener('touchmove',e=>{
-  if(!TCH||!SC||!VIEW) return;
-  const t=e.touches;
-  if(TCH.mode==='pinch' && t.length===2){
-    e.preventDefault();
-    const d=tDist(t); if(!d||!TCH.d0) return;
-    const fx=fxAt(tMid(t),TCH.r);
-    let nn=Math.round(TCH.n0*TCH.d0/d);          // fingers apart -> fewer bars -> zoom in
+window.addEventListener('pointermove',e=>{
+  if(!PTR.has(e.pointerId)) return;
+  PTR.set(e.pointerId,{x:e.clientX,y:e.clientY});
+  if(!GEST||!SC||!VIEW) return;
+  if(DBG){ dN++; if(dN===1) dFirst=Math.round(performance.now()-dT); }
+  if(GEST.mode==='pinch'){
+    const two=twoPtr(); if(!two) return;
+    const d=pDist(two); if(!d||!GEST.d0) return;
+    const fx=fxAt(pMid(two),GEST.r);
+    let nn=Math.round(GEST.n0*GEST.d0/d);        // fingers apart -> fewer bars -> zoom in
     nn=Math.max(MINBARS,Math.min(curBars().length,nn));
-    VIEW={i0:TCH.anchor-fx*nn, i1:TCH.anchor-fx*nn+nn};
-    nudge(!TCH.moved); TCH.moved=1;
-  }else if(TCH.mode==='pan' && t.length===1){
-    const dx=t[0].clientX-TCH.x, dy=t[0].clientY-TCH.y;
-    if(!TCH.axis){                               // first real movement decides the axis
-      if(Math.abs(dx)<2 && Math.abs(dy)<2) return;   // a tap stays a tap
-      TCH.axis = Math.abs(dy)>Math.abs(dx)*1.2 ? 'y' : 'x';
-    }
-    e.preventDefault();
-    if(TCH.axis==='y'){                          // touch-action:none, so scroll it ourselves
-      if(TCH.box) TCH.box.scrollTop=TCH.top-dy;  // 1:1 drag, no fling: the cost of owning the touch
-      return;
-    }
-    VIEW={i0:TCH.i0-dx*TCH.perPx, i1:TCH.i1-dx*TCH.perPx};
-    nudge(!TCH.moved); TCH.moved=1;
+    VIEW={i0:GEST.anchor-fx*nn, i1:GEST.anchor-fx*nn+nn};
+    nudge(!GEST.moved); GEST.moved=1;
+    return;
   }
-},{passive:false});
-window.addEventListener('touchend',e=>{ if(!e.touches.length) endGesture(); });
-window.addEventListener('touchcancel',endGesture);
+  const p=PTR.get(e.pointerId), dx=p.x-GEST.x, dy=p.y-GEST.y;
+  if(!GEST.axis){                                // first real movement decides the axis
+    if(Math.abs(dx)<2 && Math.abs(dy)<2) return;      // a tap stays a tap
+    GEST.axis = Math.abs(dy)>Math.abs(dx)*1.2 ? 'y' : 'x';
+  }
+  if(GEST.axis==='y'){                           // touch-action:none, so scroll it ourselves
+    if(GEST.box) GEST.box.scrollTop=GEST.top-dy; // 1:1 drag, no fling: the cost of owning the touch
+    return;
+  }
+  VIEW={i0:GEST.i0-dx*GEST.perPx, i1:GEST.i1-dx*GEST.perPx};
+  nudge(!GEST.moved); GEST.moved=1;
+});
+function liftPointer(e){
+  if(!PTR.delete(e.pointerId)) return;
+  if(PTR.size) startGesture();                   // 2 fingers -> 1: carry on panning
+  else endGesture();
+}
+window.addEventListener('pointerup',liftPointer);
+window.addEventListener('pointercancel',liftPointer);
+
 
 
 function drawModal(fast){
@@ -652,29 +678,19 @@ function open_(i){
     const r=chartRect(); if(!r) return;
     zoomAt(fxAt(e.clientX,r), e.deltaY>0 ? 1.18 : 1/1.18, true);
   },{passive:false});
-  mc.addEventListener('mousedown',e=>{
-    if(MTOOL||!SC||!VIEW) return;                // drawing mode owns the mouse
-    const r=chartRect(); if(!r) return;
-    DRAG={x:e.clientX, i0:VIEW.i0, i1:VIEW.i1, perPx:(VIEW.i1-VIEW.i0)/(r.width*(SC.pw/SC.W))};
-    mc.style.cursor='grabbing';
-  });
-  mc.addEventListener('touchstart',e=>{
-    TCH=null;
-    if(!SC||!VIEW) return;
-    const r=chartRect(); if(!r) return;
-    const t=e.touches, n=VIEW.i1-VIEW.i0;
-    if(t.length===2){
-      e.preventDefault();
-      const fx=fxAt(tMid(t),r);
-      TCH={mode:'pinch', r:r, d0:tDist(t), n0:n, anchor:VIEW.i0+fx*n};
-    }else if(t.length===1 && !MTOOL){            // drawing mode owns single-finger taps
-      const box=mc.closest('.mbox');
-      TCH={mode:'pan', x:t[0].clientX, y:t[0].clientY, i0:VIEW.i0, i1:VIEW.i1,
-           perPx:n/(r.width*(SC.pw/SC.W)), box:box, top:box?box.scrollTop:0, axis:null, moved:0};
+  mc.addEventListener('pointerdown',e=>{
+    if(e.pointerType==='mouse' && e.button!==0) return;
+    PTR.set(e.pointerId,{x:e.clientX,y:e.clientY});
+    if(DBG && PTR.size===1){ dT=performance.now(); dN=0; dFirst=0; dKind=e.pointerType; }
+    startGesture();
+    if(GEST){
+      try{ mc.setPointerCapture(e.pointerId); }catch(_){}   // survive the <svg> being replaced
+      if(e.pointerType==='mouse') mc.style.cursor='grabbing';
     }
-  },{passive:false});
+  });
 
   resetView();
+
   drawModal();
   $('modal').classList.add('on');
 }
