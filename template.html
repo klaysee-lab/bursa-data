@@ -63,6 +63,8 @@
   .tv:hover{opacity:1}
   .cv{margin:8px 0 7px;position:relative}
   .cv svg{display:block;width:100%;height:auto}
+  /* pan-y: browser keeps vertical page scroll, we get horizontal drag + pinch */
+  #mchart,#mchart svg{touch-action:pan-y}
   .st{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:11.5px;
       border-top:1px solid var(--bd);padding-top:8px}
   .st b{color:var(--ink3);font-weight:400;margin-right:4px;font-size:10.5px}
@@ -443,8 +445,8 @@ function drawModal(){
   const shown=vis.length;
   const hit=findIdx(vis,s.revDate,MTF,'rev')>=0;
   const tfN=MTF==='w'?'周线':MTF==='d'?'日线':'小时线';
-  const cover=MTF==='w'?'约3年':MTF==='d'?'约3年':'近60天';
-  const nav='滚轮缩放 · 拖拽平移 · 双击复位';
+  const cover=MTF==='w'?'约10年':MTF==='d'?'约5年':'近60天';
+  const nav='滚轮/双指缩放 · 拖拽平移 · 双击复位';
   $('mhint').innerHTML = hit
     ? `${tfN} · 显示 ${shown}/${bars.length} 根K线${MTF==='w'?`，涵盖「跌破前低 → 打底 ${s.base} 周 → 翻转站上支撑」`:'，破/翻标记已对应到该周内的具体K线'} · ${nav}`
     : `${tfN} · 显示 ${shown}/${bars.length} 根K线。破/翻不在当前视野内（本次在 ${s.ago} 周前${VIEW.i0>0?'，可向左拖或缩小':`，${tfN}数据仅${cover}`}），故只画出支撑价位参考线 · ${nav}`;
@@ -517,6 +519,8 @@ function open_(i){
     <div id="mtools" class="tfbar">
       <button class="tool" data-tool="h">━ 画横线</button>
       <button class="tool" data-tool="t">◣ 画趋势线</button>
+      <button data-zoom="out">➖</button><button data-zoom="in">➕</button><button data-zoom="0">⟲ 复位</button>
+      <span class="sep"></span>
       <button data-clear="1">🗑 清除全部</button>
       <span id="dsave" style="font-size:11px;color:var(--ink3);font-family:var(--mono)"></span>
     </div>
@@ -544,6 +548,10 @@ function open_(i){
   });
   $('mtools').addEventListener('click',e=>{
     const b=e.target.closest('button'); if(!b) return;
+    if(b.dataset.zoom!==undefined){                  // touch users have no wheel
+      if(b.dataset.zoom==='0') resetView(); else zoomAt(0.5, b.dataset.zoom==='in' ? 1/1.4 : 1.4);
+      drawModal(); return;
+    }
     if(b.dataset.clear){ DRAWS[dkey()]=[]; MTOOL=null; PEND=null; saveDraws(); }
     else { MTOOL = MTOOL===b.dataset.tool ? null : b.dataset.tool; PEND=null; }
     drawModal();
@@ -575,6 +583,51 @@ function open_(i){
     clampView(); drawModal();
   });
   window.addEventListener('mouseup',()=>{ if(drag){ drag=null; const m=$('mchart'); if(m) m.style.cursor=''; } });
+  // ---- touch: one finger pans, two fingers pinch-zoom ----------------------
+  // A touchscreen fires no wheel and no mousedown-drag, so without this the chart is
+  // frozen under a finger. Listen on window, not mc: drawModal() replaces the <svg>
+  // mid-gesture, and touch events keep firing at the (now detached) original target.
+  let tch=null;
+  const tDist=t=>Math.hypot(t[0].clientX-t[1].clientX, t[0].clientY-t[1].clientY);
+  const tMid =t=>(t[0].clientX+t[1].clientX)/2;
+  const tFx  =(x,r)=>Math.max(0,Math.min(1,((x-r.left)/r.width*SC.W-SC.padL)/SC.pw));
+  mc.addEventListener('touchstart',e=>{
+    tch=null;
+    if(!SC||!VIEW) return;
+    const svg=mc.querySelector('svg'); if(!svg) return;
+    const r=svg.getBoundingClientRect(); if(!r.width) return;
+    const t=e.touches, n=VIEW.i1-VIEW.i0;
+    if(t.length===2){
+      e.preventDefault();
+      const fx=tFx(tMid(t),r);
+      tch={mode:'pinch', r:r, d0:tDist(t), n0:n, anchor:VIEW.i0+fx*n};
+    }else if(t.length===1 && !MTOOL){          // drawing mode owns single-finger taps
+      tch={mode:'pan', x:t[0].clientX, i0:VIEW.i0, i1:VIEW.i1,
+           perPx:n/(r.width*(SC.pw/SC.W))};
+    }
+  },{passive:false});
+  window.addEventListener('touchmove',e=>{
+    if(!tch||!SC||!VIEW) return;
+    const t=e.touches, len=curBars().length;
+    if(tch.mode==='pinch' && t.length===2){
+      e.preventDefault();
+      const d=tDist(t); if(!d||!tch.d0) return;
+      const fx=tFx(tMid(t),tch.r);
+      let nn=Math.round(tch.n0*tch.d0/d);      // fingers apart -> fewer bars -> zoom in
+      nn=Math.max(MINBARS,Math.min(len,nn));
+      VIEW={i0:tch.anchor-fx*nn, i1:tch.anchor-fx*nn+nn};
+      clampView(); drawModal();
+    }else if(tch.mode==='pan' && t.length===1){
+      const dx=t[0].clientX-tch.x;
+      if(Math.abs(dx)<3) return;                // let a tap stay a tap
+      e.preventDefault();
+      VIEW={i0:tch.i0-dx*tch.perPx, i1:tch.i1-dx*tch.perPx};
+      clampView(); drawModal();
+    }
+  },{passive:false});
+  window.addEventListener('touchend',e=>{ if(!e.touches.length) tch=null; });
+  window.addEventListener('touchcancel',()=>{ tch=null; });
+
   resetView();
   drawModal();
   $('modal').classList.add('on');
