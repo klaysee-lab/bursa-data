@@ -293,7 +293,7 @@ function chart(w,sig,W,H,big,mode,view,draws){
   return `<svg viewBox="0 0 ${W} ${H}">${g}${cs}${an}${dr}${xl}</svg>`;
 }
 
-const BUILD='0903-e';   // bump on every dashboard edit; shown top-left so a stale cache is obvious
+const BUILD='0903-f';   // bump on every dashboard edit; shown top-left so a stale cache is obvious
 let ROWS=[];
 function render(){
   const p=P(), groups=[];
@@ -465,7 +465,8 @@ const PTR=new Map();                 // live pointers: id -> {x,y}
 let GEST=null, RAF=0;
 // ?dbg=1 prints what actually fired, so a "feels slow" report can be measured
 // instead of guessed at: input type, ms from press to first movement, ms per move.
-const DBG=/[?&]dbg=1/.test(location.search);
+let DBG=/[?&]dbg=1/.test(location.search);   // or press D — the query string does not
+                                            // survive into the artifact's iframe
 let dT=0,dN=0,dFirst=0,dKind='';
 function chartRect(){
   const box=$('mchart'), svg=box&&box.querySelector('svg');
@@ -697,6 +698,11 @@ function open_(i){
 $('mclose').onclick=()=>$('modal').classList.remove('on');
 $('modal').onclick=e=>{if(e.target===$('modal'))$('modal').classList.remove('on')};
 document.addEventListener('keydown',e=>{
+  if((e.key==='d'||e.key==='D') && !/^(INPUT|TEXTAREA)$/.test((e.target||{}).tagName||'')){
+    DBG=!DBG;
+    if($('mhint')) $('mhint').innerHTML+=` <b style="color:#e8b339">[dbg ${DBG?'已开启，拖一次图表看读数':'已关闭'}]</b>`;
+    return;
+  }
   if(e.key!=='Escape') return;
   if(PEND){ PEND=null; drawModal(); return; }      // first Esc cancels a half-drawn trendline
   if(MTOOL){ MTOOL=null; drawModal(); return; }    // then exits draw mode
