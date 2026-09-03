@@ -467,7 +467,9 @@ function drawModal(){
   const dsv=$('dsave');
   if(dsv){
     const here=(DRAWS[dkey()]||[]).length;
-    const where = DBSYNCED ? '云端同步（换设备也在）' : '存在本机浏览器';
+    // Be blunt about the local case: localStorage here and the artifact's db are separate
+    // stores that never meet, so lines drawn on the local file genuinely cannot reach a phone.
+    const where = DBSYNCED ? '云端同步（换设备也在）' : '⚠ 只存这台电脑·手机上看不到';
     dsv.textContent = here ? `已保存 ${here} 条 · 周/日/时通用 · ${where}` : `画的线三个周期通用 · ${where}`;
   }
 }
