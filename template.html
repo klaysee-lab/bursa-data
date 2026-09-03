@@ -293,7 +293,8 @@ function render(){
   });
 
   $('parms').textContent=`参数: 支撑观察 ${p.supportWeeks} 周 · 打底 ${p.minBase}-${p.maxBase} 周(容忍再深跌${p.tolPct}%) · 最小反弹 ${p.minReboundPct}% ·"刚发生"窗口 ${p.recentWeeks} 周 · 命中 ${ROWS.length}/${pool.length} 只`;
-  $('foot').innerHTML=`数据快照 ${SNAP} 收盘 · 覆盖 FBM KLCI 30 成分股与科技股 Top 30（共 ${DATA.length} 只，均已用参考价校验代码正确性）<br>`+
+  // SNAP is a weekly bar's Monday, so label it as a week rather than letting it read as a cutoff.
+  $('foot').innerHTML=`数据截至 ${SNAP} 起的那一周 · 覆盖 FBM KLCI 30 成分股与科技股 Top 30（共 ${DATA.length} 只，均已用参考价校验代码正确性）<br>`+
     `用「启动看板.bat」打开时，「刷新数据」会真的抓取最新行情；直接双击 HTML 打开则受浏览器跨域限制，只能按当前参数重算已有数据。<br>`+
     `仅作技术面观察，不构成投资建议——破底翻是概率结构，失败案例同样存在，实际交易决策与风险由你自行判断。`;
 
@@ -659,11 +660,16 @@ async function liveRefresh(btn){
       if(hh&&hh.length) { DH[d.sym]=DH[d.sym]||{}; DH[d.sym].h=hh.slice(-399); }
     }catch(e){ fail++; }
   }
-  const newest=DATA.map(d=>d.w[d.w.length-1][0]).sort().pop();
+  // Report the last SESSION, not the last weekly bar: weekly bars are labelled with their
+  // Monday, so quoting one reads as "data stops on Monday" when it actually includes today.
+  const lastSession=DATA.map(d=>{const b=(DH[d.sym]||{}).d; return b&&b.length?b[b.length-1][0]:null;})
+                        .filter(Boolean).sort().pop()
+                     || DATA.map(d=>d.w[d.w.length-1][0]).sort().pop();
+  const weekOf=DATA.map(d=>d.w[d.w.length-1][0]).sort().pop();
   render();
   $('snapnote').innerHTML = fail>total/2
     ? `⚠ 抓取多数失败（${fail}/${total}），显示的仍多为旧数据。`
-    : `✓ 已抓取最新行情，数据更新至 <b>${newest}</b>（${new Date().toLocaleTimeString('zh-CN')} 更新）${fail?`，${fail} 只抓取失败沿用旧数据`:''}。盘中最后一根K线尚未收盘，仍会变动。`;
+    : `✓ 已抓取最新行情，最后交易日 <b>${lastSession}</b>（${new Date().toLocaleTimeString('zh-CN')} 更新）${fail?`，${fail} 只抓取失败沿用旧数据`:''}。周线归入 ${weekOf} 那一周，本周五收盘前这根还会变动。`;
 }
 $('rescan').onclick=async function(){
   const btn=this, old=btn.textContent; btn.disabled=true;
