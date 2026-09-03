@@ -63,8 +63,10 @@
   .tv:hover{opacity:1}
   .cv{margin:8px 0 7px;position:relative}
   .cv svg{display:block;width:100%;height:auto}
-  /* pan-y: browser keeps vertical page scroll, we get horizontal drag + pinch */
-  #mchart,#mchart svg{touch-action:pan-y}
+  /* none, not pan-y: with pan-y the browser must first decide scroll-vs-page and holds
+     the gesture back for ~8px of finger travel, which reads as "nothing happens yet".
+     We own every touch here and scroll .mbox ourselves on a vertical swipe. */
+  #mchart,#mchart svg{touch-action:none}
   .st{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:11.5px;
       border-top:1px solid var(--bd);padding-top:8px}
   .st b{color:var(--ink3);font-weight:400;margin-right:4px;font-size:10.5px}
@@ -466,7 +468,11 @@ function chartRect(){
 const fxAt=(x,r)=>Math.max(0,Math.min(1,((x-r.left)/r.width*SC.W-SC.padL)/SC.pw));
 // One redraw per frame, and skip the toolbar rebuild while the finger is down: a full
 // drawModal() runs ~18ms on 500 bars, which a 120Hz touchmove stream easily outruns.
-function nudge(){
+function nudge(now){
+  if(now){                                        // first move of a gesture: waiting a
+    if(RAF){ cancelAnimationFrame(RAF); RAF=0; }  // frame here is exactly what reads as lag
+    clampView(); drawModal(true); return;
+  }
   if(RAF) return;
   RAF=requestAnimationFrame(()=>{ RAF=0; clampView(); drawModal(true); });
 }
@@ -480,7 +486,7 @@ window.addEventListener('mousemove',e=>{
   if(!DRAG) return;
   const d=-(e.clientX-DRAG.x)*DRAG.perPx;
   VIEW={i0:DRAG.i0+d, i1:DRAG.i1+d};
-  nudge();
+  nudge(!DRAG.moved); DRAG.moved=1;
 });
 window.addEventListener('mouseup',endGesture);
 window.addEventListener('touchmove',e=>{
@@ -493,13 +499,20 @@ window.addEventListener('touchmove',e=>{
     let nn=Math.round(TCH.n0*TCH.d0/d);          // fingers apart -> fewer bars -> zoom in
     nn=Math.max(MINBARS,Math.min(curBars().length,nn));
     VIEW={i0:TCH.anchor-fx*nn, i1:TCH.anchor-fx*nn+nn};
-    nudge();
+    nudge(!TCH.moved); TCH.moved=1;
   }else if(TCH.mode==='pan' && t.length===1){
-    const dx=t[0].clientX-TCH.x;
-    if(Math.abs(dx)<3) return;                   // let a tap stay a tap
+    const dx=t[0].clientX-TCH.x, dy=t[0].clientY-TCH.y;
+    if(!TCH.axis){                               // first real movement decides the axis
+      if(Math.abs(dx)<2 && Math.abs(dy)<2) return;   // a tap stays a tap
+      TCH.axis = Math.abs(dy)>Math.abs(dx)*1.2 ? 'y' : 'x';
+    }
     e.preventDefault();
+    if(TCH.axis==='y'){                          // touch-action:none, so scroll it ourselves
+      if(TCH.box) TCH.box.scrollTop=TCH.top-dy;  // 1:1 drag, no fling: the cost of owning the touch
+      return;
+    }
     VIEW={i0:TCH.i0-dx*TCH.perPx, i1:TCH.i1-dx*TCH.perPx};
-    nudge();
+    nudge(!TCH.moved); TCH.moved=1;
   }
 },{passive:false});
 window.addEventListener('touchend',e=>{ if(!e.touches.length) endGesture(); });
@@ -655,7 +668,9 @@ function open_(i){
       const fx=fxAt(tMid(t),r);
       TCH={mode:'pinch', r:r, d0:tDist(t), n0:n, anchor:VIEW.i0+fx*n};
     }else if(t.length===1 && !MTOOL){            // drawing mode owns single-finger taps
-      TCH={mode:'pan', x:t[0].clientX, i0:VIEW.i0, i1:VIEW.i1, perPx:n/(r.width*(SC.pw/SC.W))};
+      const box=mc.closest('.mbox');
+      TCH={mode:'pan', x:t[0].clientX, y:t[0].clientY, i0:VIEW.i0, i1:VIEW.i1,
+           perPx:n/(r.width*(SC.pw/SC.W)), box:box, top:box?box.scrollTop:0, axis:null, moved:0};
     }
   },{passive:false});
 
