@@ -1,9 +1,17 @@
 #!/usr/bin/env python3
-"""Build the sector board: fetch weekly bars for the 20-sector Top-20 universe,
+"""Build the sector board: fetch weekly bars for the Top-20-per-sector universe,
 run the basing scan, and write a ready-to-publish HTML into sector/.
 
+The universe is Bursa's OWN 13 sectors (Consumer / Industrial Products & Services,
+Construction, Technology, Financial Services, Property, Plantation, REIT, Energy,
+Health Care, Telecommunications & Media, Transportation & Logistics, Utilities), taken
+from KLSE Screener. It replaced TradingView's 20-sector global taxonomy, which classified
+Bursa names into buckets like "Producer Manufacturing" and "Miscellaneous" that mean
+nothing to a Malaysian trader. The Yahoo symbol is the Bursa stock code + ".KL", so
+symbol resolution is exact - no search-and-guess, no wrong-company matches.
+
 Why this one builds the whole page while fetch.py only writes data: the sector
-universe is 322 stocks (~5.2 MB of bars). The Claude routine cannot assemble that
+universe is ~250 stocks (~4.1 MB of bars). The Claude routine cannot assemble that
 -- it would have to pull 5 MB through its own context. So the runner does the
 assembly and the routine's entire job becomes "publish this file".
 
@@ -126,7 +134,7 @@ def main():
             continue
 
         rows.append({
-            "t": st["t"], "sym": sym, "n": st["n"], "s": st["s"],
+            "t": st["t"], "sym": sym, "n": st["n"], "s": st["s"], "i": st.get("i", ""),
             "wr": weekly_range_pct(bars), "w": bars,
         })
 
@@ -143,7 +151,7 @@ def main():
         s = scan(r["w"], PARAMS)
         if s and s["ago"] <= RECENT_WEEKS:
             sigs[r["t"]] = {
-                "sym": r["sym"], "n": r["n"], "s": r["s"], "wr": r["wr"],
+                "sym": r["sym"], "n": r["n"], "s": r["s"], "i": r["i"], "wr": r["wr"],
                 "revDate": s["revDate"], "ago": s["ago"], "base": s["base"],
                 "sup": round(s["sup"], 4), "rev": round(s["rev"], 4),
                 "reclaim": round((s["rev"] - s["sup"]) / s["sup"] * 100, 1),
@@ -165,8 +173,9 @@ def main():
     for r in rows:
         bars = ",".join("[%s,%s,%s,%s,%s]" % (js_str(b[0]), b[1], b[2], b[3], b[4])
                         for b in r["w"])
-        parts.append('{"t":%s,"sym":%s,"n":%s,"s":%s,"wr":%s,"w":[%s]}' % (
-            js_str(r["t"]), js_str(r["sym"]), js_str(r["n"]), js_str(r["s"]), r["wr"], bars))
+        parts.append('{"t":%s,"sym":%s,"n":%s,"s":%s,"i":%s,"wr":%s,"w":[%s]}' % (
+            js_str(r["t"]), js_str(r["sym"]), js_str(r["n"]), js_str(r["s"]),
+            js_str(r["i"]), r["wr"], bars))
     html = html.replace("__DATA__", "[" + ",".join(parts) + "]").replace("__SNAP__", snap)
     with open(os.path.join(OUT, "board.html"), "w", encoding="utf-8") as f:
         f.write(html)

@@ -122,7 +122,7 @@
   <div class="top">
     <div>
       <h1><span class="pre">MY</span>马股板块「破底翻」监控</h1>
-      <p class="sub">20 个板块各取市值 Top 20 — 龙头与二线一起扫 · 跌破前低后打底数周、未再破新低，再明显拉回反转
+      <p class="sub">Bursa 13 个板块各取市值 Top 20 — 龙头与二线一起扫 · 跌破前低后打底数周、未再破新低，再明显拉回反转
         <span class="mono" style="color:var(--ink3)">· 构建 <b id="build"></b></span></p>
     </div>
     <div class="ctrl">
@@ -305,7 +305,7 @@ function chart(w,sig,W,H,big,mode,view,draws){
 
 
 
-const BUILD='0903-b';    // bump on every edit; shown top-left so a stale cache is obvious
+const BUILD='0906-a';    // bump on every edit; shown top-left so a stale cache is obvious
 const MTF='w';           // weekly only — this board carries no daily/hourly data
 let ROWS=[], BYSEC=new Map(), OPEN=new Set(), FULL=new Set(), COLLAPSED=false;
 
@@ -329,9 +329,9 @@ function render(){
   $('parms').textContent=`参数: 支撑观察 ${p.supportWeeks} 周 · 打底 ${p.minBase}-${p.maxBase} 周(容忍再深跌${p.tolPct}%) · 最小反弹 ${p.minReboundPct}% · `
     +`「刚发生」窗口 ${p.recentWeeks} 周 → ${p.recentWeeks} 周内 ${totalHot} 只 · 十年内曾出现 ${withSig}/${ROWS.length} 只`;
   if($('build')) $('build').textContent=BUILD;
-  $('foot').innerHTML=`数据截至 ${SNAP} 起的那一周 · 覆盖马股 20 个板块各市值 Top 20（共 ${DATA.length} 只，每只都已用参考价校验代码正确性）<br>`
+  $('foot').innerHTML=`数据截至 ${SNAP} 起的那一周 · 覆盖 Bursa 官方 13 个板块，各取市值 Top 20（共 ${DATA.length} 只，每只都已用参考价校验代码正确性）<br>`
     +`只带周线：破底翻是周线形态，省掉日线/小时线才能让 ${DATA.length} 只在手机上也打得开。要看日线细节，点开股票后走 TradingView。<br>`
-    +`已剔除上市不足 60 周的新股、ETF 与结构性产品，以及 Yahoo 查不到代码的小型股。`;
+    +`板块与股票代码取自 Bursa 官方分类（KLSE Screener），Yahoo 符号 = 股票代码 + .KL，不存在匹配错公司的可能。已剔除上市不足 60 周的新股，以及 ETF／债券／商业信托／封闭式基金。`;
 
   // headers render now, cards only when a section is open — building 322 charts up front is waste
   $('secs').innerHTML=secs.map(x=>{
@@ -375,7 +375,7 @@ function card(i,p){
     : `<span class="ago">${s.ago} 周前</span>`;
   return `<div class="card${s&&s.ago<=p.recentWeeks?' hit':''}" data-i="${i}">
     <div class="ch">
-      <div><div class="nm">${esc(d.n)}</div><div class="sy">${d.sym} · ${esc(d.s)}</div></div>
+      <div><div class="nm">${esc(d.n)}</div><div class="sy">${d.sym} · ${esc(d.i||d.s)}</div></div>
       <div style="display:flex;gap:6px;align-items:center">
         <span class="wr${wrCls}" title="近52周典型周振幅">振幅 ${d.wr}%</span>${badge}</div>
     </div>
@@ -644,7 +644,7 @@ function open_(i){
   MI=i; MRANGE='260'; MTOOL=null; PEND=null;
   const d=ROWS[i],s=d.sig,p=P();
   $('mtitle').innerHTML=`<div style="font-size:19px;font-weight:600">${esc(d.n)}</div>
-    <div class="sy" style="margin-top:3px">${d.sym} · ${esc(d.s)} · 典型周振幅 ${d.wr}%</div>`;
+    <div class="sy" style="margin-top:3px">${d.sym} · ${esc(d.s)}${d.i?' · '+esc(d.i):''} · 典型周振幅 ${d.wr}%</div>`;
   $('mbody').innerHTML=`
     <div id="mtf" class="tfbar">
       <span style="font-size:12.5px;color:var(--ink3)">周线</span>
