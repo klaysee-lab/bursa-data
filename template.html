@@ -67,6 +67,12 @@
      the gesture back for ~8px of finger travel, which reads as "nothing happens yet".
      We own every touch here and scroll .mbox ourselves on a vertical swipe. */
   #mchart,#mchart svg{touch-action:none}
+  /* the crosshair lives in its own overlay so a pointer move never re-renders the chart */
+  #mchart .xh{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;display:none}
+  #mchart .xhbox{position:absolute;left:8px;top:6px;pointer-events:none;display:none;
+    font-family:var(--mono);font-size:11px;color:var(--ink2);white-space:nowrap;
+    background:var(--card2);border:1px solid var(--bd);border-radius:5px;padding:3px 8px}
+  #mchart .xhbox .sn{color:#e8b339;font-weight:600}
   .st{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:11.5px;
       border-top:1px solid var(--bd);padding-top:8px}
   .st b{color:var(--ink3);font-weight:400;margin-right:4px;font-size:10.5px}
@@ -293,7 +299,7 @@ function chart(w,sig,W,H,big,mode,view,draws){
   return `<svg viewBox="0 0 ${W} ${H}">${g}${cs}${an}${dr}${xl}</svg>`;
 }
 
-const BUILD='0905-a';   // bump on every dashboard edit; shown top-left so a stale cache is obvious
+const BUILD='0906-b';   // bump on every dashboard edit; shown top-left so a stale cache is obvious
 let ROWS=[];
 function render(){
   const p=P(), groups=[];
@@ -601,16 +607,79 @@ function pick(ev){
   if(!isFinite(i)||!isFinite(price)) return null;
   i=Math.max(0,Math.min(SC.n-1,i));
   const bar=SC.s[i]; if(!bar) return null;
-  return {price, idx:i, date:bar[0]};
+  // Snap to this bar's open/high/low/close when the cursor is within a few pixels of one.
+  // A support line drawn on a prior low should land ON the low, not near it.
+  const tol=(SC.hi-SC.lo)*(7/SC.ph);
+  let snap=price, snapTo=null;
+  for(const kv of [['开',bar[1]],['高',bar[2]],['低',bar[3]],['收',bar[4]]]){
+    if(Math.abs(price-kv[1])<=tol && (snapTo===null || Math.abs(price-kv[1])<Math.abs(price-snap))){
+      snap=kv[1]; snapTo=kv[0];
+    }
+  }
+  return {price, snap, snapTo, idx:i, date:bar[0]};
 }
+// ---- crosshair -----------------------------------------------------------
+// Drawn into an overlay <svg> on top of the chart, never into the chart string: the chart
+// is a rebuilt string, and re-rendering 500 bars per pointer move undoes the batching work.
+function xhLayer(){
+  const box=$('mchart'); if(!box||!SC) return null;
+  let l=box.querySelector('.xh');
+  if(!l){
+    box.insertAdjacentHTML('beforeend',
+      '<svg class="xh" viewBox="0 0 '+SC.W+' '+SC.H+'">'
+      +'<line class="xv" stroke="var(--ink2)" stroke-width=".7" stroke-dasharray="3,3" opacity=".85"/>'
+      +'<line class="xz" stroke="var(--ink2)" stroke-width=".7" stroke-dasharray="3,3" opacity=".85"/>'
+      +'<rect class="xpb" width="52" height="16" rx="3"/>'
+      +'<text class="xpt" font-size="11" text-anchor="middle" font-family="var(--mono)" font-weight="600"></text>'
+      +'</svg><div class="xhbox"></div>');
+    l=box.querySelector('.xh');
+  }
+  return l;
+}
+function hideXH(){
+  const box=$('mchart'); if(!box) return;
+  const l=box.querySelector('.xh'), t=box.querySelector('.xhbox');
+  if(l) l.style.display='none';
+  if(t) t.style.display='none';
+}
+function showXH(ev){
+  const box=$('mchart'); if(!box||!SC) return;
+  const svg=box.querySelector('svg'); if(!svg) return;
+  const r=svg.getBoundingClientRect(); if(!r.width||!r.height) return;
+  const p=pick(ev); if(!p) return;
+  const l=xhLayer(); if(!l) return;
+  const vx=(ev.clientX-r.left)/r.width*SC.W, vy=(ev.clientY-r.top)/r.height*SC.H;
+  const x=Math.max(SC.padL,Math.min(SC.W-SC.padR,vx));
+  const yc=Math.max(SC.padT,Math.min(SC.padT+SC.ph,vy));
+  const shown=p.snapTo ? p.snap : SC.lo+(1-(yc-SC.padT)/SC.ph)*(SC.hi-SC.lo);
+  const y=SC.padT+(1-(shown-SC.lo)/(SC.hi-SC.lo))*SC.ph;
+  const q=function(sel,a,v){ l.querySelector(sel).setAttribute(a,v); };
+  q('.xv','x1',x); q('.xv','x2',x); q('.xv','y1',SC.padT); q('.xv','y2',SC.padT+SC.ph);
+  q('.xz','y1',y.toFixed(1)); q('.xz','y2',y.toFixed(1)); q('.xz','x1',SC.padL); q('.xz','x2',SC.W-SC.padR);
+  q('.xpb','x',SC.W-SC.padR+1); q('.xpb','y',(y-8).toFixed(1)); q('.xpb','fill',p.snapTo?'#e8b339':'var(--ink2)');
+  q('.xpt','x',SC.W-SC.padR+27); q('.xpt','y',(y+4).toFixed(1)); q('.xpt','fill','var(--bg)');
+  l.querySelector('.xpt').textContent=shown.toFixed(3);
+  l.style.display='block';
+  const b=SC.s[p.idx], t=box.querySelector('.xhbox');
+  if(b&&t){
+    const up=b[4]>=b[1];
+    t.innerHTML=b[0]+' &nbsp;开 '+b[1].toFixed(3)+' &nbsp;高 '+b[2].toFixed(3)+' &nbsp;低 '+b[3].toFixed(3)
+      +' &nbsp;<b style="color:'+(up?'var(--up)':'var(--dn)')+'">收 '+b[4].toFixed(3)+'</b>'
+      +(p.snapTo ? ' &nbsp;· <span class="sn">吸附 '+p.snapTo+' '+p.snap.toFixed(3)+'</span>'
+                 : ' &nbsp;· 光标 '+shown.toFixed(3));
+    t.style.display='block';
+  }
+}
+
 function onChartClick(ev){
+
   if(!MTOOL||!SC) return;
   const p=pick(ev); if(!p) return;
   const key=dkey(); DRAWS[key]=DRAWS[key]||[];
-  if(MTOOL==='h'){ DRAWS[key].push({k:'h',y:p.price}); }
+  if(MTOOL==='h'){ DRAWS[key].push({k:'h',y:p.snap}); }
   else {
-    if(!PEND){ PEND={d:p.date,y:p.price}; $('mhint').innerHTML='趋势线：已选起点，再点一次选终点（按 Esc 取消）。'; return; }
-    DRAWS[key].push({k:'t',d1:PEND.d,y1:PEND.y,d2:p.date,y2:p.price}); PEND=null;
+    if(!PEND){ PEND={d:p.date,y:p.snap}; $('mhint').innerHTML='趋势线：已选起点，再点一次选终点（按 Esc 取消）。'; return; }
+    DRAWS[key].push({k:'t',d1:PEND.d,y1:PEND.y,d2:p.date,y2:p.snap}); PEND=null;
   }
   saveDraws();
   drawModal();
@@ -671,6 +740,8 @@ function open_(i){
   const mc=$('mchart');
   mc.addEventListener('click',onChartClick);
   mc.addEventListener('dblclick',()=>{ resetView(); drawModal(); });
+  mc.addEventListener('pointermove',showXH);
+  mc.addEventListener('pointerleave',hideXH);
   // Only the element-scoped half lives here — #mchart is rebuilt by every open_(), so
   // its listeners go with it. The window-scoped half is registered once, up top.
   mc.addEventListener('wheel',e=>{
