@@ -24,14 +24,19 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Fetch from Yahoo Finance
+      - name: Fetch from Yahoo Finance (KLCI board)
         run: python fetch.py
+
+      # The sector board is 322 weekly series. It builds its own page here rather than
+      # shipping raw data, because the Claude routine cannot pull 5 MB through its context.
+      - name: Fetch and build the sector board
+        run: python fetch_sector.py
 
       - name: Commit if changed
         run: |
           git config user.name  "bursa-data bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data
+          git add data sector
           if git diff --staged --quiet; then
             echo "No change."
           else
