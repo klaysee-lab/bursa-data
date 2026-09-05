@@ -150,7 +150,7 @@
   <div class="top">
     <div>
       <h1><span class="pre">MY</span>马股板块「破底翻」监控</h1>
-      <p class="sub">Bursa 13 个板块各取市值 Top 20 — 龙头与二线一起扫 · 跌破前低后打底数周、未再破新低，再明显拉回反转
+      <p class="sub">Bursa 13 个板块各取市值 Top 20 — 龙头与二线一起扫 · 搜索可覆盖市值 1 亿以上的全部马股 · 跌破前低后打底数周、未再破新低，再明显拉回反转
         <span class="mono" style="color:var(--ink3)">· 构建 <b id="build"></b></span></p>
     </div>
     <div class="ctrl">
@@ -337,7 +337,7 @@ function chart(w,sig,W,H,big,mode,view,draws){
 
 
 
-const BUILD='0906-b';    // bump on every edit; shown top-left so a stale cache is obvious
+const BUILD='0906-c';    // bump on every edit; shown top-left so a stale cache is obvious
 const MTF='w';           // weekly only — this board carries no daily/hourly data
 let ROWS=[], BYSEC=new Map(), OPEN=new Set(), FULL=new Set(), COLLAPSED=false;
 
@@ -382,6 +382,7 @@ function render(){
   ROWS=DATA.map(d=>({...d,sig:scan(d.w,p)}));
   BYSEC=new Map();
   ROWS.forEach((d,i)=>{
+    if(d.x) return;                       // extra: searchable and pinnable, not listed in the grid
     if(!BYSEC.has(d.s)) BYSEC.set(d.s,[]);
     BYSEC.get(d.s).push(i);
   });
@@ -393,11 +394,14 @@ function render(){
   }).sort((a,b)=> b.hot-a.hot || b.n-a.n || a.s.localeCompare(b.s));
 
   const totalHot=secs.reduce((a,x)=>a+x.hot,0);
-  const withSig=ROWS.filter(d=>d.sig).length;
+  const core=ROWS.filter(d=>!d.x);
+  const withSig=core.filter(d=>d.sig).length;
   $('parms').textContent=`参数: 支撑观察 ${p.supportWeeks} 周 · 打底 ${p.minBase}-${p.maxBase} 周(容忍再深跌${p.tolPct}%) · 最小反弹 ${p.minReboundPct}% · `
-    +`「刚发生」窗口 ${p.recentWeeks} 周 → ${p.recentWeeks} 周内 ${totalHot} 只 · 十年内曾出现 ${withSig}/${ROWS.length} 只`;
+    +`「刚发生」窗口 ${p.recentWeeks} 周 → ${p.recentWeeks} 周内 ${totalHot} 只 · 十年内曾出现 ${withSig}/${core.length} 只`
+    +` · 搜索可覆盖 ${ROWS.length} 只（含 ${ROWS.length-core.length} 只不在板块列表内）`;
   if($('build')) $('build').textContent=BUILD;
-  $('foot').innerHTML=`数据截至 ${SNAP} 起的那一周 · 覆盖 Bursa 官方 13 个板块，各取市值 Top 20（共 ${DATA.length} 只，每只都已用参考价校验代码正确性）<br>`
+  $('foot').innerHTML=`数据截至 ${SNAP} 起的那一周 · Bursa 官方 13 个板块 · 板块列表显示各板块市值 Top 20（${core.length} 只，10年周线）`
+    +` · 另收录市值 1 亿以上的其余 ${ROWS.length-core.length} 只（5年周线），只能通过搜索加入观察清单<br>`
     +`只带周线：破底翻是周线形态，省掉日线/小时线才能让 ${DATA.length} 只在手机上也打得开。要看日线细节，点开股票后走 TradingView。<br>`
     +`板块与股票代码取自 Bursa 官方分类（KLSE Screener），Yahoo 符号 = 股票代码 + .KL，不存在匹配错公司的可能。已剔除上市不足 60 周的新股，以及 ETF／债券／商业信托／封闭式基金。`;
 
@@ -704,9 +708,14 @@ function drawModal(fast){
   if(fast) return;                                 // a pan/zoom changes none of the chrome below
   const rg=$('mrg');
   if(rg){
-    rg.innerHTML=RANGES.map(o=>{
-      const dead = o.k!=='all' && o.n>=bars.length;
-      return `<button data-rg="${o.k}"${dead?' disabled title="本股只有 '+bars.length+' 根K线"':''}
+    // An option that already reaches past the data shows everything, so keep the FIRST such
+    // one usable and grey only the ones beyond it. Without this an extra-tier stock (260
+    // bars) greys out 5年 — the very option it is sitting on.
+    let coveredAt=-1;
+    RANGES.forEach((o,idx)=>{ if(coveredAt<0 && (o.k==='all'||o.n>=bars.length)) coveredAt=idx; });
+    rg.innerHTML=RANGES.map((o,idx)=>{
+      const dead = coveredAt>=0 && idx>coveredAt;
+      return `<button data-rg="${o.k}"${dead?' disabled title="本股只有 '+bars.length+' 根周线（约 '+Math.round(bars.length/52)+' 年），此范围与更短的选项显示相同"':''}
         style="${dead?'opacity:.4;cursor:not-allowed':''}">${o.t}</button>`;
     }).join('');
     rg.querySelectorAll('button').forEach(b=>b.classList.toggle('on',MRANGE===b.dataset.rg));
@@ -930,7 +939,7 @@ function hits(){
     if(hay.includes(q)) out.push(i);
   }
   if(!out.length){
-    box.innerHTML=`<div class="hit" style="color:var(--ink3);cursor:default">没有匹配。本看板只收录各板块市值前 20 名，其余马股暂时没有K线数据。</div>`;
+    box.innerHTML=`<div class="hit" style="color:var(--ink3);cursor:default">没有匹配。本看板收录市值 1 亿以上的马股；更小的仙股周线断续，形态算不出有意义的结果，故未收录。</div>`;
     box.classList.add('on'); HSEL=-1; return;
   }
   HSEL=0;
@@ -938,7 +947,7 @@ function hits(){
     const d=ROWS[i];
     return `<div class="hit${k===0?' sel':''}" data-i="${i}">
       ${WATCH.has(d.t)?'<span class="on2">已在清单</span>':''}
-      <b>${esc(d.t)}</b>${esc(d.n)}<i>${d.sym} · ${esc(d.s)}${d.i?' · '+esc(d.i):''}</i></div>`;
+      <b>${esc(d.t)}</b>${esc(d.n)}<i>${d.sym} · ${esc(d.s)}${d.i?' · '+esc(d.i):''}${d.x?' · 板块列表外':''}</i></div>`;
   }).join('');
   box.classList.add('on');
 }

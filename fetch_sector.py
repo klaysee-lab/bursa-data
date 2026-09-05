@@ -29,7 +29,9 @@ from fetch import MYT, ROOT, get, parse
 
 OUT = os.path.join(ROOT, "sector")
 TEMPLATE = os.path.join(ROOT, "sector_template.html")
-KEEP = 540              # 10 years of weekly bars, same depth as the KLCI board
+KEEP_CORE = 540         # 10 years for the names the sector grids render
+KEEP_EXTRA = 260        # 5 years for the search-only pool - enough for a basing setup,
+                        # and half the bytes. 456 of the 709 are in this tier.
 MIN_BARS = 60           # below this there is not enough history for a basing setup
 RECENT_WEEKS = 4        # the "just happened" window the notification uses
 
@@ -115,7 +117,8 @@ def main():
         except Exception as e:                          # noqa: BLE001 - report, don't abort
             print("  ! %s: %s" % (sym, e), file=sys.stderr)
             bars = []
-        bars = bars[-KEEP:] if bars else []
+        keep = KEEP_EXTRA if st.get("x") else KEEP_CORE
+        bars = bars[-keep:] if bars else []
 
         if len(bars) < MIN_BARS:
             failed.append(sym)
@@ -135,6 +138,7 @@ def main():
 
         rows.append({
             "t": st["t"], "sym": sym, "n": st["n"], "s": st["s"], "i": st.get("i", ""),
+            "x": int(st.get("x", 0)),
             "wr": weekly_range_pct(bars), "w": bars,
         })
 
@@ -150,8 +154,12 @@ def main():
     for r in rows:
         s = scan(r["w"], PARAMS)
         if s and s["ago"] <= RECENT_WEEKS:
+            # Everything is scanned, but only the sector-grid names are newsworthy by
+            # default. An extra is announced only if the user pinned it - that is what
+            # the watchlist is for, and 456 extra names would drown the digest otherwise.
             sigs[r["t"]] = {
                 "sym": r["sym"], "n": r["n"], "s": r["s"], "i": r["i"], "wr": r["wr"],
+                "core": r["x"] == 0,
                 "revDate": s["revDate"], "ago": s["ago"], "base": s["base"],
                 "sup": round(s["sup"], 4), "rev": round(s["rev"], 4),
                 "reclaim": round((s["rev"] - s["sup"]) / s["sup"] * 100, 1),
@@ -173,9 +181,9 @@ def main():
     for r in rows:
         bars = ",".join("[%s,%s,%s,%s,%s]" % (js_str(b[0]), b[1], b[2], b[3], b[4])
                         for b in r["w"])
-        parts.append('{"t":%s,"sym":%s,"n":%s,"s":%s,"i":%s,"wr":%s,"w":[%s]}' % (
+        parts.append('{"t":%s,"sym":%s,"n":%s,"s":%s,"i":%s%s,"wr":%s,"w":[%s]}' % (
             js_str(r["t"]), js_str(r["sym"]), js_str(r["n"]), js_str(r["s"]),
-            js_str(r["i"]), r["wr"], bars))
+            js_str(r["i"]), ',"x":1' if r["x"] else '', r["wr"], bars))
     html = html.replace("__DATA__", "[" + ",".join(parts) + "]").replace("__SNAP__", snap)
     with open(os.path.join(OUT, "board.html"), "w", encoding="utf-8") as f:
         f.write(html)
@@ -189,6 +197,7 @@ def main():
             "snap": snap,
             "generated_at": datetime.now(MYT).strftime("%Y-%m-%d %H:%M:%S +08:00"),
             "count": len(rows),
+            "core": sum(1 for r in rows if not r["x"]),
             "recent": len(sigs),
             "new": len(fresh),
             "failed": failed,
@@ -199,7 +208,8 @@ def main():
     size = os.path.getsize(os.path.join(OUT, "board.html"))
     print("\n%d/%d symbols, snap %s, board.html %.2f MB"
           % (len(rows), len(stocks), snap, size / 1048576.0))
-    print("recent(<=%dw): %d, new since last run: %d" % (RECENT_WEEKS, len(sigs), len(fresh)))
+    print("recent(<=%dw): %d (core %d), new since last run: %d"
+          % (RECENT_WEEKS, len(sigs), sum(1 for v in sigs.values() if v["core"]), len(fresh)))
     if fresh:
         print("new: " + ", ".join("%s(%s)" % (t, v["revDate"]) for t, v in fresh.items()))
     if failed:
