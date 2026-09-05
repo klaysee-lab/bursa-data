@@ -293,7 +293,7 @@ function chart(w,sig,W,H,big,mode,view,draws){
   return `<svg viewBox="0 0 ${W} ${H}">${g}${cs}${an}${dr}${xl}</svg>`;
 }
 
-const BUILD='0903-f';   // bump on every dashboard edit; shown top-left so a stale cache is obvious
+const BUILD='0905-a';   // bump on every dashboard edit; shown top-left so a stale cache is obvious
 let ROWS=[];
 function render(){
   const p=P(), groups=[];
@@ -787,10 +787,21 @@ async function liveRefresh(btn){
                         .filter(Boolean).sort().pop()
                      || DATA.map(d=>d.w[d.w.length-1][0]).sort().pop();
   const weekOf=DATA.map(d=>d.w[d.w.length-1][0]).sort().pop();
+  // Two different clocks, and running them together read as "that trading day was updated
+  // at 13:14". They are unrelated: one is a market date, the other is this machine's clock
+  // at the moment you pressed refresh. Label both, and date the timestamp so it can't float.
+  const pad=n=>String(n).padStart(2,'0');
+  const now=new Date();
+  const today=`${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+  const wd=['周日','周一','周二','周三','周四','周五','周六'];
+  const sess=lastSession===today
+    ? `${lastSession}（今天）`
+    : `${lastSession}（${wd[new Date(lastSession+'T00:00:00').getDay()]}）`;
   render();
   $('snapnote').innerHTML = fail>total/2
     ? `⚠ 抓取多数失败（${fail}/${total}），显示的仍多为旧数据。`
-    : `✓ 已抓取最新行情，最后交易日 <b>${lastSession}</b>（${new Date().toLocaleTimeString('zh-CN')} 更新）${fail?`，${fail} 只抓取失败沿用旧数据`:''}。周线归入 ${weekOf} 那一周，本周五收盘前这根还会变动。`;
+    : `✓ 已抓取最新行情 · 最后交易日 <b>${sess}</b> · 本次刷新 ${today} ${pad(now.getHours())}:${pad(now.getMinutes())}`
+      + `${fail?` · ${fail} 只抓取失败沿用旧数据`:''}。周线归入 ${weekOf} 那一周，本周五收盘前这根还会变动。`;
 }
 $('rescan').onclick=async function(){
   const btn=this, old=btn.textContent; btn.disabled=true;
