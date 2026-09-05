@@ -63,3 +63,18 @@ frame-runtime 前导码；用成品当底稿会把前导码一起烤进源码，
 （实测前导码**不会**累积：平台在发布时会剥掉旧的 frame-runtime 块再重新注入，两次读回的页面大小
 分别是 4490640 和 4490642 字节，基本相同。所以后果只有改名这一项——因为扫描标题发生在剥离之前。
 仍然要用模板重建，这是最省事也最不会出错的做法。）
+
+## 板块看板（sector/）
+
+`fetch_sector.py` 和 `fetch.py` 的分工**故意不一样**，改动前先看懂原因：
+
+- `fetch.py`（KLCI 59 只）只提交数据，页面由云端任务用 `template.html` 拼。
+- `fetch_sector.py`（322 只）在 runner 上**直接把成品页面建好**提交（`sector/board.html`），云端任务只负责原样发布。
+
+原因：322 只周线约 5MB，云端任务要拼页面就得把这 5MB 读进自己的上下文，这条路走不通。所以谁有算力谁干活——runner 有完整的网络和内存，云端任务只做它非做不可的那件事（发布 artifact）。
+
+`fetch_sector.py` **import** `fetch.py`，不是复制。null-close 和 running-week 两个 Yahoo 陷阱的修复只能有一份，两个看板不能各改各的。
+
+它还自己跑一遍扫描，写出 `sector/new_signals.json`——比对的是 **revDate** 而不是「有没有信号」，所以一个信号变旧不会天天重复通知。云端任务那边另有一道哨兵：新增超过 25 只就当作基线重置，只报数字不列清单。
+
+改页面的流程：编辑 `bursa-sector/shell.html` → 跑 `assemble.pl`（本地那份）→ 跑 `mktemplate.pl`（更新本仓库的 `sector_template.html`）。**两个都要跑**，只跑前者的话 runner 明天还是建旧页面。
