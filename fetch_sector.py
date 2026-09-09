@@ -50,11 +50,27 @@ def weekly_from_daily(js):
 
 
 def weekly_range_pct(w):
-    """Median (high-low)/close over the last year, in percent. Mirrors wrOf() in the
-    page. This number feeds the breakout line, so it has to match."""
+    """Median (high-low)/close over the last year, in percent.
+
+    THE PAGE DOES NOT USE THIS. render() recomputes it with wrOf() from the bars, so
+    the authoritative implementation is the one in the template, same as the scan.
+    It is still written into the data blob because the format has always carried a
+    "wr" field, and a field that is present but wrong is worse than one that matches.
+
+    First cut of this file got both halves of wrOf() wrong and nobody would have
+    noticed without a side-by-side: it kept zero-range weeks (a week whose high equals
+    its low) in the sample instead of dropping them, and it took the upper-middle
+    element instead of averaging the middle two. 23 of 56 signals came out with a
+    different wr; HIL alone read 3.0 against the page's 3.7, which moved ADB's
+    breakout line from 0.61 to 0.615. wr feeds the breakout line, so that matters.
+    """
     tail = w[-52:] if len(w) >= 52 else w
-    v = sorted((b[2] - b[3]) / b[4] * 100.0 for b in tail if b[4] > 0)
-    return round(v[len(v) // 2], 1) if v else 0.0
+    v = sorted(x for x in ((b[2] - b[3]) / b[4] * 100.0 for b in tail if b[4] > 0) if x > 0)
+    if not v:
+        return 0.0
+    n = len(v)
+    mid = v[(n - 1) // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2.0
+    return round(mid, 1)
 
 
 def js_str(s):

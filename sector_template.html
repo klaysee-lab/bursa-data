@@ -582,7 +582,7 @@ function chart(w,sig,W,H,big,mode,view,draws){
 
 
 
-const BUILD='0909-l-R14';   // L = 本地版（带刷新按钮）    // bump on every edit; shown top-left so a stale cache is obvious
+const BUILD='0909-m-R15';   // L = 本地版（带刷新按钮）    // bump on every edit; shown top-left so a stale cache is obvious
 let MTF='w';             // 'w' 周线 · 'd' 日线（日线是开图时按需抓的，不进 data.json）
 let ROWS=[], BYSEC=new Map(), OPEN=new Set(), FULL=new Map(), COLLAPSED=false;
 const PAGE=60;          // 每次铺开的卡片数——一张卡就是一张 SVG K线图
@@ -645,7 +645,13 @@ initWatchDB();
 
 function render(){
   const p=P();
-  ROWS=DATA.map(d=>({...d,sig:scan(d.w,p,d.wr)}));
+  // wr 一律现算，不用数据里带的那个。周振幅是突破线的输入之一（突破幅度取
+  // max(固定%, volK×wr)），所以它必须跟规则一样只有一份实现。GitHub Actions 那边
+  // 曾经有一份 Python 的 weekly_range_pct，跟这里的 wrOf 有两处不一样：它把「零振幅
+  // 的周」当 0 算进中位数（这里是过滤掉），偶数样本取偏上那个（这里取中间两个的
+  // 平均）。结果 23/56 只股的 wr 对不上，HIL 一只就差 3.7 vs 3.0，ADB 的突破线
+  // 因此从 0.61 变成 0.615。数据本身完全一致，纯粹是这个小函数抄了第二份。
+  ROWS=DATA.map(d=>{ const wr=wrOf(d.w); return {...d, wr, sig:scan(d.w,p,wr)}; });
   BYSEC=new Map();
   ROWS.forEach((d,i)=>{
     if(!BYSEC.has(d.s)) BYSEC.set(d.s,[]);
