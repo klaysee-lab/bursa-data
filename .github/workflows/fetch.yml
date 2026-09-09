@@ -27,10 +27,38 @@ jobs:
       - name: Fetch from Yahoo Finance (KLCI board)
         run: python fetch.py
 
-      # The sector board is 322 weekly series. It builds its own page here rather than
-      # shipping raw data, because the Claude routine cannot pull 5 MB through its context.
+      # The sector board is ~666 weekly series. It builds its own page here rather than
+      # shipping raw data, because the Claude routine cannot pull 7 MB through its context.
       - name: Fetch and build the sector board
         run: python fetch_sector.py
+
+      # board.html is 7.5 MB and is rebuilt every weekday. Committing it to main was
+      # adding roughly 1.9 GB of git history a year, and not one byte of that history is
+      # ever read back -- the routine only ever wants the newest one. So it goes to an
+      # orphan branch that carries exactly one commit and is force-pushed each run:
+      # yesterday's blob becomes unreachable and GitHub garbage-collects it.
+      #
+      # Why not an Actions artifact or a release asset: the routine's sandbox allows
+      # api.github.com and nothing else, and both of those download endpoints answer with
+      # a 302 to objects.githubusercontent.com. A shallow git clone is the one delivery
+      # channel known to work from inside there, because that is what the routine already
+      # does today. meta.json and new_signals.json ride along so the routine needs a
+      # single clone; main keeps its own copies, whose history is small and worth having.
+      - name: Publish the board to the single-commit "board" branch
+        run: |
+          rm -rf /tmp/boardout
+          mkdir -p /tmp/boardout
+          cp sector/board.html sector/meta.json sector/new_signals.json /tmp/boardout/
+          cd /tmp/boardout
+          git init -q -b board
+          git config user.name  "bursa-data bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "board: $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git push -q --force \
+            "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" \
+            board:board
+          echo "pushed $(du -h board.html | cut -f1) to refs/heads/board"
 
       - name: Commit if changed
         run: |

@@ -1,0 +1,3 @@
+# 7.5MB, rebuilt every weekday. Lives on the single-commit "board" branch instead,
+# so main stops accumulating ~1.9GB of never-read history a year. See fetch.yml.
+sector/board.html
