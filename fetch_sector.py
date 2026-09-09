@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
-"""Build the sector board: fetch weekly bars for the Top-20-per-sector universe,
-run the basing scan, and write a ready-to-publish HTML into sector/.
+"""Build the sector board: fetch DAILY bars for the ~666-name universe, fold them into
+weekly bars, and splice them into a ready-to-publish HTML.
 
-The universe is Bursa's OWN 13 sectors (Consumer / Industrial Products & Services,
-Construction, Technology, Financial Services, Property, Plantation, REIT, Energy,
-Health Care, Telecommunications & Media, Transportation & Logistics, Utilities), taken
-from KLSE Screener. It replaced TradingView's 20-sector global taxonomy, which classified
-Bursa names into buckets like "Producer Manufacturing" and "Miscellaneous" that mean
-nothing to a Malaysian trader. The Yahoo symbol is the Bursa stock code + ".KL", so
-symbol resolution is exact - no search-and-guess, no wrong-company matches.
+THIS FILE DELIBERATELY CONTAINS NO SCAN LOGIC.
 
-Why this one builds the whole page while fetch.py only writes data: the sector
-universe is ~250 stocks (~4.1 MB of bars). The Claude routine cannot assemble that
--- it would have to pull 5 MB through its own context. So the runner does the
-assembly and the routine's entire job becomes "publish this file".
+It used to carry a Python port of the dashboard's scan(), "line for line". Four months
+later the two had drifted into different rules entirely: the port still used a 13-week
+support window and a 1.5% close-based reclaim, while the dashboard had moved to 52 weeks,
+a breakout line derived from the break week's HIGH, tick-size alignment, a pullback band
+and two daily confirmation steps. Nobody noticed, and the cloud board quietly published
+signals the local board did not agree with. So the port is gone. The rule now lives in
+exactly one place, sector_template.html, and the notification digest is produced by
+running that same page (see signals()).
 
-Imports fetch.py rather than copying its parser: the null-close and running-week
-traps are fixed there, and they must not drift between the two boards.
+Why daily bars for a weekly board: Yahoo's own weekly series inherits its highs and lows
+from zero-volume placeholder days (see the trap note in fetch.parse). Those cannot be
+detected at weekly resolution, because a weekly bar carries no volume. Fetching daily,
+dropping the placeholders and folding the survivors into weeks is the only way to get a
+clean weekly high. Costs roughly 25x the bytes of the weekly endpoint; worth it.
 """
 
+import html as htmlmod
 import json
 import os
+import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from datetime import datetime
 
 import fetch
@@ -29,61 +35,23 @@ from fetch import MYT, ROOT, get, parse
 
 OUT = os.path.join(ROOT, "sector")
 TEMPLATE = os.path.join(ROOT, "sector_template.html")
-KEEP_CORE = 540         # 10 years for the names the sector grids render
-KEEP_EXTRA = 260        # 5 years for the search-only pool - enough for a basing setup,
-                        # and half the bytes. 456 of the 709 are in this tier.
+KEEP_CORE = 540         # weeks of history for the names the sector grids render
+KEEP_EXTRA = 260        # search-only tier: 5 years is plenty for a basing setup
 MIN_BARS = 60           # below this there is not enough history for a basing setup
-RECENT_WEEKS = 4        # the "just happened" window the notification uses
-
-# Defaults must match the dashboard's own inputs, or the page recomputes something
-# different from what the notification announced.
-PARAMS = dict(supportWeeks=13, minBase=3, maxBase=12, tolPct=4.0, minReboundPct=1.5)
 
 
-def scan(w, p):
-    """Port of scan() in the dashboard, line for line. Returns the LATEST qualifying
-    reversal, or None. Verified against the page: same signals on the same bars."""
-    n = len(w)
-    low_of = [b[3] for b in w]
-    close_of = [b[4] for b in w]
-    best = None
-    sw = p["supportWeeks"]
-    for b in range(sw, n):
-        sup = min(low_of[b - sw:b])
-        if low_of[b] >= sup:
-            continue                                    # must break below the prior low
-        bl = low_of[b]
-        floor = bl * (1 - p["tolPct"] / 100.0)
-        for length in range(p["minBase"], p["maxBase"] + 1):
-            end, r = b + length - 1, b + length
-            if r >= n:
-                break
-            lo, li, ok = float("inf"), b, True
-            for k in range(b, end + 1):
-                if low_of[k] < lo:
-                    lo, li = low_of[k], k
-                if k > b and low_of[k] < floor:
-                    ok = False                          # a meaningful new low breaks the base
-                    break
-            if not ok:
-                continue
-            if close_of[r] < sup * (1 + p["minReboundPct"] / 100.0):
-                continue                                # the reversal week must clearly reclaim
-            cand = {
-                "sup": sup, "low": lo, "rev": close_of[r], "revIdx": r,
-                "base": length, "ago": n - 1 - r,
-                "lowDate": w[li][0], "revDate": w[r][0], "breakDate": w[b][0],
-            }
-            if best is None or cand["revIdx"] > best["revIdx"]:
-                best = cand
-            break
-    return best
+def weekly_from_daily(js):
+    """Daily Yahoo JSON -> clean weekly bars. parse() applies the null-close and
+    zero-volume filters at daily resolution, then merge_weekly folds by ISO week."""
+    daily = parse(js)                       # daily semantics: the live close IS filled in
+    if not daily:
+        return []
+    return fetch.merge_weekly(daily, None)
 
 
 def weekly_range_pct(w):
-    """Median (high-low)/close over the last year, in percent. This is the number the
-    card shows: a 2% reclaim means one thing on a stock that moves 2% a week and
-    something else entirely on one that moves 9%."""
+    """Median (high-low)/close over the last year, in percent. Mirrors wrOf() in the
+    page. This number feeds the breakout line, so it has to match."""
     tail = w[-52:] if len(w) >= 52 else w
     v = sorted((b[2] - b[3]) / b[4] * 100.0 for b in tail if b[4] > 0)
     return round(v[len(v) // 2], 1) if v else 0.0
@@ -91,6 +59,44 @@ def weekly_range_pct(w):
 
 def js_str(s):
     return json.dumps(s, ensure_ascii=False)
+
+
+def find_chrome():
+    for name in ("google-chrome", "google-chrome-stable", "chromium-browser", "chromium"):
+        p = shutil.which(name)
+        if p:
+            return p
+    return None
+
+
+def signals(board_path):
+    """Run the finished page under headless Chrome with ?signals=1 and read back the
+    JSON it prints. The page computes it with the same scan() the reader sees, so the
+    digest cannot disagree with the board. No network: the data is already inlined."""
+    chrome = find_chrome()
+    if not chrome:
+        print("  ! no chrome found; skipping the digest", file=sys.stderr)
+        return None
+    url = "file://" + board_path.replace(os.sep, "/") + "?signals=1"
+    with tempfile.TemporaryDirectory() as prof:
+        cmd = [chrome, "--headless=new", "--disable-gpu", "--no-sandbox",
+               "--no-first-run", "--virtual-time-budget=120000",
+               "--user-data-dir=" + prof, "--dump-dom", url]
+        try:
+            done = subprocess.run(cmd, capture_output=True, timeout=300)
+        except Exception as e:                              # noqa: BLE001
+            print("  ! chrome failed: %s" % e, file=sys.stderr)
+            return None
+    dom = done.stdout.decode("utf-8", "replace")
+    m = re.search(r'<pre id="sigout">(.*?)</pre>', dom, re.S)
+    if not m:
+        print("  ! the page produced no #sigout block", file=sys.stderr)
+        return None
+    try:
+        return json.loads(htmlmod.unescape(m.group(1)))
+    except ValueError as e:
+        print("  ! #sigout was not JSON: %s" % e, file=sys.stderr)
+        return None
 
 
 def main():
@@ -110,11 +116,13 @@ def main():
     rows, failed, suspect = [], [], []
     for st in stocks:
         sym = st["sym"]
+        # 10y daily for everyone. The weekly history kept is trimmed afterwards, but the
+        # placeholder filter has to see every day in order to rebuild a week correctly.
         url = ("https://query1.finance.yahoo.com/v8/finance/chart/%s"
-               "?range=10y&interval=1wk" % sym)
+               "?range=10y&interval=1d" % sym)
         try:
-            bars = parse(get(url), weekly=True)
-        except Exception as e:                          # noqa: BLE001 - report, don't abort
+            bars = weekly_from_daily(get(url))
+        except Exception as e:                              # noqa: BLE001 - report, do not abort
             print("  ! %s: %s" % (sym, e), file=sys.stderr)
             bars = []
         keep = KEEP_EXTRA if st.get("x") else KEEP_CORE
@@ -149,31 +157,11 @@ def main():
     snap = max(r["w"][-1][0] for r in rows)
     os.makedirs(OUT, exist_ok=True)
 
-    # --- signals, and what is new since the last run ------------------------
-    sigs = {}
-    for r in rows:
-        s = scan(r["w"], PARAMS)
-        if s and s["ago"] <= RECENT_WEEKS:
-            # Everything is scanned, but only the sector-grid names are newsworthy by
-            # default. An extra is announced only if the user pinned it - that is what
-            # the watchlist is for, and 456 extra names would drown the digest otherwise.
-            sigs[r["t"]] = {
-                "sym": r["sym"], "n": r["n"], "s": r["s"], "i": r["i"], "wr": r["wr"],
-                "core": r["x"] == 0,
-                "revDate": s["revDate"], "ago": s["ago"], "base": s["base"],
-                "sup": round(s["sup"], 4), "rev": round(s["rev"], 4),
-                "reclaim": round((s["rev"] - s["sup"]) / s["sup"] * 100, 1),
-            }
-    # "new" means a reversal week this ticker did not already have. Comparing the
-    # revDate (not just presence) is what stops a signal re-announcing as it ages.
-    fresh = {t: v for t, v in sigs.items()
-             if prev_sigs.get(t, {}).get("revDate") != v["revDate"]}
-
     # --- the page ----------------------------------------------------------
     with open(TEMPLATE, encoding="utf-8") as f:
-        html = f.read()
+        page = f.read()
     for marker in ("__DATA__", "__SNAP__"):
-        if marker not in html:
+        if marker not in page:
             print("FATAL: %s missing from sector_template.html" % marker, file=sys.stderr)
             return 1
 
@@ -184,9 +172,30 @@ def main():
         parts.append('{"t":%s,"sym":%s,"n":%s,"s":%s,"i":%s%s,"wr":%s,"w":[%s]}' % (
             js_str(r["t"]), js_str(r["sym"]), js_str(r["n"]), js_str(r["s"]),
             js_str(r["i"]), ',"x":1' if r["x"] else '', r["wr"], bars))
-    html = html.replace("__DATA__", "[" + ",".join(parts) + "]").replace("__SNAP__", snap)
-    with open(os.path.join(OUT, "board.html"), "w", encoding="utf-8") as f:
-        f.write(html)
+    page = page.replace("__DATA__", "[" + ",".join(parts) + "]").replace("__SNAP__", snap)
+    board = os.path.join(OUT, "board.html")
+    with open(board, "w", encoding="utf-8") as f:
+        f.write(page)
+
+    # --- the digest, computed BY the page just written ---------------------
+    dump = signals(os.path.abspath(board))
+    sigs = {}
+    if dump:
+        for s in dump.get("signals", []):
+            sigs[s["t"]] = {
+                "sym": s["sym"], "n": s["n"], "s": s["s"], "i": s["i"], "wr": s["wr"],
+                "core": bool(s["core"]),
+                "revDate": s["revDate"], "breakDate": s["breakDate"],
+                "ago": s["ago"], "base": s["base"],
+                "sup": round(s["sup"], 4), "rev": round(s["rev"], 4),
+                "lvl": round(s["lvl"], 4), "bh": round(s["bh"], 4), "bl": round(s["bl"], 4),
+                "band": [round(s["band"][0], 4), round(s["band"][1], 4)],
+                "reclaim": s["reclaim"],
+            }
+    # "new" means a reversal week this ticker did not already have. Comparing revDate
+    # (not just presence) is what stops a signal re-announcing as it ages.
+    fresh = {t: v for t, v in sigs.items()
+             if prev_sigs.get(t, {}).get("revDate") != v["revDate"]}
 
     with open(sig_path, "w", encoding="utf-8") as f:
         json.dump(sigs, f, separators=(",", ":"), ensure_ascii=False)
@@ -200,18 +209,23 @@ def main():
             "core": sum(1 for r in rows if not r["x"]),
             "recent": len(sigs),
             "new": len(fresh),
+            "digest_ok": bool(dump),
+            "params": (dump or {}).get("params"),
             "failed": failed,
             "suspect": suspect,
             "last_close": {r["sym"]: r["w"][-1][4] for r in rows},
         }, f, separators=(",", ":"), ensure_ascii=False)
 
-    size = os.path.getsize(os.path.join(OUT, "board.html"))
+    size = os.path.getsize(board)
     print("\n%d/%d symbols, snap %s, board.html %.2f MB"
           % (len(rows), len(stocks), snap, size / 1048576.0))
-    print("recent(<=%dw): %d (core %d), new since last run: %d"
-          % (RECENT_WEEKS, len(sigs), sum(1 for v in sigs.values() if v["core"]), len(fresh)))
-    if fresh:
-        print("new: " + ", ".join("%s(%s)" % (t, v["revDate"]) for t, v in fresh.items()))
+    if dump:
+        print("recent: %d (core %d), new since last run: %d"
+              % (len(sigs), sum(1 for v in sigs.values() if v["core"]), len(fresh)))
+        if fresh:
+            print("new: " + ", ".join("%s(%s)" % (t, v["revDate"]) for t, v in fresh.items()))
+    else:
+        print("!! digest unavailable - the page did not produce signals")
     if failed:
         print("failed: " + ", ".join(failed))
     if suspect:

@@ -60,6 +60,7 @@ def parse(js, hourly=False, weekly=False):
     ts = r.get("timestamp") or []
     q = (r.get("indicators", {}).get("quote") or [{}])[0]
     o, h, l, c = (q.get(k) or [] for k in ("open", "high", "low", "close"))
+    vols = q.get("volume") or []
     live = (r.get("meta") or {}).get("regularMarketPrice")
 
     bars = []
@@ -68,6 +69,17 @@ def parse(js, hourly=False, weekly=False):
         if i >= len(o) or i >= len(h) or i >= len(l) or i >= len(c):
             break
         if o[i] is None or h[i] is None or l[i] is None:
+            continue
+        vol = vols[i] if i < len(vols) else None
+        # ZERO-VOLUME PLACEHOLDER TRAP: on a day with no trades Yahoo still emits a
+        # bar carrying the previous close in all four prices, with volume 0. The price
+        # is real but nobody traded at it. Measured 2026-09-09 across all 666 names:
+        # 13,611 of 166,336 daily bars (8.2%), every single stock affected, and 572 of
+        # them set their week HIGH above the real traded high. MAXIS is the case that
+        # exposed it -- weekly H 3.71 came entirely from one of these; the real high
+        # that week was 3.60, so the breakout line was 3.79 instead of 3.68.
+        # Judged on the RAW four prices, so the in-progress bar (open is None) survives.
+        if not vol and c[i] is not None and o[i] == h[i] == l[i] == c[i]:
             continue
         close = c[i]
         if close is None:
