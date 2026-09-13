@@ -37,7 +37,24 @@ OUT = os.path.join(ROOT, "sector")
 TEMPLATE = os.path.join(ROOT, "sector_template.html")
 KEEP_CORE = 540         # weeks of history for the names the sector grids render
 KEEP_EXTRA = 260        # search-only tier: 5 years is plenty for a basing setup
-MIN_BARS = 60           # below this there is not enough history for a basing setup
+MIN_BARS = 8            # below this the fetch is broken, not the stock (see note)
+# MIN_BARS is a data-integrity floor, NOT a "can this stock produce a signal" floor.
+# Those are three different numbers and conflating them cost the board 43 names:
+#
+#   8   weekly bars - below this, what came back is a broken fetch, not a young stock
+#   28  weekly bars - the E rule's minimum (its WARM is 26: the break has to land after
+#                     week 26 and the reversal the week after)
+#   53  weekly bars - the A/C/D rule's minimum, because supportWeeks is 52
+#
+# This used to read 60, which is none of those. sector_symbols.json carries 709 names;
+# 60 silently dropped 43 of them, every one a 2025-or-later listing, and the board went
+# out as "666 names, market cap 100m and up, not one missing" while being exactly that
+# minus every recent IPO. Two of the 43 are dead tickers (BPROP 4219, RSSB 9776 - Yahoo
+# returns a single bar); the other 41 had 8 to 59 real weekly bars.
+#
+# A name with fewer than 53 bars still renders here - chart, sector grid, search - it
+# just never produces a signal under the A rule, and its card says so. That is the
+# correct outcome, not a gap to be papered over by excluding it.
 
 
 def weekly_from_daily(js):
