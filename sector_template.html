@@ -9,11 +9,15 @@
     --ink:#e8eef6; --ink2:#9fb0c4; --ink3:#6b7d92;
     --up:#26a69a; --dn:#ef5350; --sup:#f2555a; --rev:#3fc98a;
     --hl:#2ea043; --btn:#1f6feb; --hlbg:rgba(46,160,67,.07);
+    --band:#58a6ff; --bandfill:rgba(88,166,255,.14);   /* 回踩区间：跟 MT5 那块板子同一套蓝 */
+    --arw:#f5c542;                          /* 支撑价出处的箭头 */
     --mono:'IBM Plex Mono','Consolas',monospace; --body:'IBM Plex Sans','Segoe UI',system-ui,sans-serif;
   }
   :root[data-theme="light"]{
     --bg:#f2f5f9; --card:#fff; --card2:#f7f9fc; --bd:#d9e1ec; --bd2:#c4cfdd;
     --ink:#101720; --ink2:#4a5a6e; --ink3:#7b8ca1; --hlbg:rgba(46,160,67,.09);
+    --band:#1f6feb; --bandfill:rgba(31,111,235,.13);
+    --arw:#a8730a;                          /* 亮黄在白底上等于隐形，浅色主题压成深金 */
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:14px}
@@ -94,11 +98,10 @@
      也不是失败，是「这张卡背后的样本很薄」。不到 53 周的连信号都算不出来 */
   .dc.yg{background:rgba(163,113,247,.14);border-color:#8957e5;color:#d2a8ff}
   :root[data-theme="light"] .dc.yg{background:rgba(137,87,229,.10);color:#6639ba;font-weight:600}
-  /* 回踩区间的价位：红底，跟图上那个红色虚线框对上 */
-  .bandpx{background:rgba(242,85,90,.16);border:1px solid var(--sup);color:var(--sup);
+  /* 回踩区间的价位：蓝底，跟图上那个蓝框对上（配色取自 MT5 那块板子）*/
+  .bandpx{background:var(--bandfill);border:1px solid var(--band);color:var(--band);
     border-radius:4px;padding:1px 7px;font-family:var(--mono);font-weight:600;white-space:nowrap}
-  .st .bandpx, .note .bandpx{color:var(--sup)}   /* .st span 的红色会被覆盖，提高一点权重 */
-  :root[data-theme="light"] .bandpx{background:rgba(242,85,90,.12)}
+  .st .bandpx, .note .bandpx{color:var(--band)}   /* .st span 的颜色会盖过来，提高一点权重 */
   .tv{opacity:.5;text-decoration:none;font-size:13px;line-height:1}
   /* 日图结果面板：跟板块用同一套折叠件，只是边框换个颜色好区分 */
   #dayres{margin-bottom:14px}
@@ -272,7 +275,7 @@
     <span><i class="dot r"></i>破 = 破低那根周K（H / L 就是它的最高价和最低价）</span>
     <span><i class="dot"></i>翻 = 那一周之内摸到了突破线（具体哪一天由日图定）</span>
     <span><i class="dash"></i>支撑价 · <i class="dash" style="border-top-color:var(--rev)"></i>突破线（破低周收盘 +3% 或 +2 跳，不低于支撑价）· <i class="dash" style="border-top-color:#e8b339"></i>最高价 H · <i class="dash" style="border-top-color:#9b8cff"></i>最低价 L</span>
-    <span style="color:var(--ink3)">虚线框 = 回踩区间（下沿 支撑价 −2%，上沿 (H+支撑价)/2 +2%）· 日线 3/3 = 突破日之后连续 3 日收盘守住支撑价</span>
+    <span style="color:var(--ink3)"><b style="color:var(--band)">蓝框</b> = 回踩区间（下沿 支撑价 −4%，上沿 (H+支撑价)/2 +4%）· <b style="color:var(--arw)">↗ 黄箭头</b> = 支撑价出自这一根的最低价（画在那根蜡烛下方） · 日线 3/3 = 突破日之后连续 3 日收盘守住支撑价</span>
   </div>
   <p class="parms" id="parms"></p>
   <div id="alertbar"></div>
@@ -331,8 +334,10 @@ function scan(w,p,wr){
   const N=w.length,L=i=>w[i][3],C=i=>w[i][4],HI=i=>w[i][2];
   let best=null;
   for(let b=p.supportWeeks;b<N;b++){
-    let sup=Infinity;
-    for(let k=b-p.supportWeeks;k<b;k++) sup=Math.min(sup,L(k));
+    // 记下支撑价出自哪一根——图上要用黄箭头指出来，不然读的人不知道那条线哪来的。
+    // 并列最低时取最早那根（严格小于才更新）：那才是「这个底最早什么时候打出来的」。
+    let sup=Infinity, supI=-1;
+    for(let k=b-p.supportWeeks;k<b;k++) if(L(k)<sup){ sup=L(k); supI=k; }
     if(!isFinite(sup)||L(b)>=sup) continue;          // must break below the prior low
     const bl=L(b), bh=HI(b), bc=C(b);
     // 突破线 = 破低周「最高价 H」再往上一段：「H+breakPct%」「H+breakTicks 跳」「支撑价」三者取最高。
@@ -361,7 +366,8 @@ function scan(w,p,wr){
              // 用 H 而不是突破线：H 是市场当周真打出来的价，突破线是算出来的，参数一改就漂。
              band:[snapTick(sup*(1-p.pbPct/100)), snapTick(((bh+sup)/2)*(1+p.pbPct/100))],
              rev:C(r),revIdx:r,base:r-b,ago:N-1-r,
-             bIdx:b,lowDate:w[li][0],revDate:w[r][0],breakDate:w[b][0]};
+             bIdx:b,lowDate:w[li][0],revDate:w[r][0],breakDate:w[b][0],
+             supIdx:supI, supDate:supI>=0?w[supI][0]:null};
     if(!best||c.revIdx>best.revIdx) best=c;
   }
   return best;
@@ -471,7 +477,7 @@ function chart(w,sig,W,H,big,mode,view,draws){
     if(body[k]) cs+=`<path d="${body[k]}" fill="${col}"/>`;
   }
 
-  let an='';
+  let an='', bandPill=null;   // 区间价签的位置，黄箭头的标签要躲开它
   if(sig){
     // 四条价位线 + 回踩区间框。价位常常挨得很近（支撑价 ±1% 的带子只有一两个跳动），
     // 所以线照实画，标签另外排：先按 y 排序，再把挨太近的往下推，谁也不压谁。
@@ -486,7 +492,9 @@ function chart(w,sig,W,H,big,mode,view,draws){
     if(sig.band && sig.band[1]>sig.band[0]){
       const y1=Y(sig.band[1]), y2=Y(sig.band[0]);
       an+=`<rect x="${padL}" y="${y1.toFixed(1)}" width="${(W-padR-padL).toFixed(1)}" height="${Math.max(2,y2-y1).toFixed(1)}"`
-        + ` fill="var(--sup)" fill-opacity=".13" stroke="var(--sup)" stroke-width=".8" stroke-dasharray="3,3" stroke-opacity=".6"/>`;
+        // 填充别去掉：图上本来就有 4 条横线，只留上下两条边的话区间就不再读作一个
+        // 「区域」，变成第 5、6 条线，反而更乱。边框用实线——四条虚线里再来一条虚线认不出来。
+        + ` fill="var(--bandfill)" stroke="var(--band)" stroke-width="1" stroke-opacity=".85"/>`;
     }
     for(const o of L4){
       const y=Y(o.v);
@@ -510,9 +518,16 @@ function chart(w,sig,W,H,big,mode,view,draws){
           + `<text x="${padL+22}" y="${(it.y+1.5).toFixed(1)}" fill="${it.c}" font-size="11" font-family="var(--mono)">${it.t} ${f2(it.v)}</text>`;
       }
       if(sig.band && sig.band[1]>sig.band[0]){
-        const yb=Y(sig.band[0]), txt=`回踩区间 ${f2(sig.band[0])}–${f2(sig.band[1])}`;
-        an+=`<rect x="${(W-padR-4-136).toFixed(1)}" y="${(yb+2).toFixed(1)}" width="136" height="14" rx="3" fill="var(--sup)" fill-opacity=".18" stroke="var(--sup)" stroke-width=".8" stroke-opacity=".75"/>`
-          + `<text x="${W-padR-9}" y="${(yb+12.5).toFixed(1)}" fill="var(--sup)" font-size="10.5" font-family="var(--mono)" text-anchor="end">${txt}</text>`;
+        // 区间正下方居中。原来贴在右下角：离区间本身太远，得用眼睛找它属于哪个框，
+        // 还跟价格轴、最后一根的价签、支撑价那个黄箭头挤在同一块地方。
+        const yb=Y(sig.band[0]), txt=`回踩区间 ${f2(sig.band[0])} – ${f2(sig.band[1])}`;
+        const tw=[...txt].reduce((a,c)=>a+(c.charCodeAt(0)>255?10.5:6.3),0);
+        const bw2=tw+16, cx=padL+pw/2;
+        // 区间贴着图底时下面没地方了，翻到上沿之上
+        const ty=(yb+16<=H-padB-2) ? yb+2 : Y(sig.band[1])-16;
+        bandPill={x:cx-bw2/2, y:ty, w:bw2, h:14};
+        an+=`<rect x="${(cx-bw2/2).toFixed(1)}" y="${ty.toFixed(1)}" width="${bw2.toFixed(1)}" height="14" rx="3" fill="var(--bandfill)" stroke="var(--band)" stroke-width=".8" stroke-opacity=".75"/>`
+          + `<text x="${cx.toFixed(1)}" y="${(ty+10.5).toFixed(1)}" fill="var(--band)" font-size="10.5" text-anchor="middle" font-family="var(--mono)">${txt}</text>`;
       }
     }
     const bi=findIdx(s,sig.breakDate,mode,'low'), fs=big?12:10;
@@ -538,6 +553,46 @@ function chart(w,sig,W,H,big,mode,view,draws){
           + ` height="${Math.max(8,yb-yt+6).toFixed(1)}" rx="2" fill="none"`
           + ` stroke="var(--rev)" stroke-width="1.3" stroke-dasharray="3,2.5"/>`;
       }}
+    // 支撑价是「前 N 周的最低价」，只画一条横线看不出它从哪来 ——
+    // 在做出那个低点的那根上斜插一个 45° 黄箭头，指明「这条线是这一根定的」。
+    // 它本来是一根周K，而图上可能画的是日线：findIdx 的 'low' 会退到那一周里
+    // 最低的那一根，在日线图上正好就是真正做出这个低点的那支蜡烛。
+    // 支撑价可能是 50 周之前的事，常常根本不在视野里 —— 那就不画，
+    // 由卡片上的文字说明它在什么时候，别让人以为箭头丢了。
+    const gi=sig.supDate?findIdx(s,sig.supDate,mode,'low'):-1;
+    if(gi>=0){
+      const gx=X(gi), gy=Y(s[gi][3]);
+      const c=.7071, YEL='var(--arw)';
+      // 摆在蜡烛**下方**，从左下往右上 45° 指着那根的最低价 —— 不压蜡烛、不挡K线。
+      const tx=gx-2, ty=gy+2;               // 尖端沿反方向退开 2px，不盖住最低点本身
+      // 箭杆往左下伸。两头都要夹住：左边不能出画布，下边不能钻出绘图区
+      // （支撑价那根常常就是视野里的最低点，底下本来就没多少地方）。
+      const L=Math.max(6,Math.min(big?26:15, tx-padL-4, (H-padB-2)-ty));
+      const sx=tx-L, sy=ty+L;               // 箭杆起点：左下
+      const bx=tx-4.95, by=ty+4.95;         // 箭头三角的底边中点
+      an+=`<line x1="${sx.toFixed(1)}" y1="${sy.toFixed(1)}" x2="${bx.toFixed(1)}" y2="${by.toFixed(1)}" stroke="${YEL}" stroke-width="${big?1.6:1.2}" stroke-linecap="round"/>`
+        + `<polygon points="${tx.toFixed(1)},${ty.toFixed(1)} ${(bx+3.5*c).toFixed(1)},${(by+3.5*c).toFixed(1)} ${(bx-3.5*c).toFixed(1)},${(by-3.5*c).toFixed(1)}" fill="${YEL}"/>`;
+      const lab = big ? `支撑价出自这根 ${esc(String(sig.supDate).slice(0,10))}` : '支撑';
+      // 标签贴在箭杆起点外侧；左边摆不下就翻到右侧，别让字跑出画布
+      const estW=lab.length*(big?11:9)*.62;
+      const left = sx-4-estW > padL;
+      // 区间下沿 = 支撑价 ×(1−回踩%)，永远就在支撑价底下一点点，所以这个标签
+      // 跟区间价签几乎必然撞在同一行上（两者都挂在同一个价位附近）。
+      // 先试着在同一行往左让开 —— 保持跟箭杆的视觉联系；左边塞不下才往下挪一行。
+      let lx=left?sx-4:sx+4, ly=sy+3.5, anch=left?'end':'start';
+      if(bandPill){
+        const x0=anch==='end'?lx-estW:lx, x1=anch==='end'?lx:lx+estW;
+        const near=!(x1+6<bandPill.x || bandPill.x+bandPill.w+6<x0
+                   || ly+3+6<bandPill.y || bandPill.y+bandPill.h+6<ly-11);
+        if(near){
+          if(bandPill.x-6-estW > padL){ lx=bandPill.x-6; anch='end'; }
+          else if(bandPill.y+bandPill.h+13 <= H-padB-2){ ly=bandPill.y+bandPill.h+13; }
+          else { ly=bandPill.y-5; }
+        }
+      }
+      an+=`<text x="${lx.toFixed(1)}" y="${ly.toFixed(1)}" fill="${YEL}" font-size="${big?10.5:9}"`
+        + ` font-family="var(--mono)" text-anchor="${anch}">${lab}</text>`;
+    }
     // ④⑤：第 4、5 步通过时标在日线上，落点同样只认 dayCheck 算出的那两天。
     // 都摆在 K 线下方——第 4 步看收盘守住支撑价、第 5 步看最低价探进区间，
     // 都是「下缘」的事；上方留给「翻」，不会挤在一起。
@@ -586,7 +641,7 @@ function chart(w,sig,W,H,big,mode,view,draws){
 
 
 
-const BUILD='0909-m-R15';   // L = 本地版（带刷新按钮）    // bump on every edit; shown top-left so a stale cache is obvious
+const BUILD='0910-b-R17';   // L = 本地版（带刷新按钮）    // bump on every edit; shown top-left so a stale cache is obvious
 let MTF='w';             // 'w' 周线 · 'd' 日线（日线是开图时按需抓的，不进 data.json）
 let ROWS=[], BYSEC=new Map(), OPEN=new Set(), FULL=new Map(), COLLAPSED=false;
 const PAGE=60;          // 每次铺开的卡片数——一张卡就是一张 SVG K线图
