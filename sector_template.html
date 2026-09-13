@@ -90,6 +90,10 @@
   :root[data-theme="light"] .dc.ok{color:#1a7f37;font-weight:600}
   .dc.wait{border-color:#6b5320;color:#e8b339}
   .dc.bad{border-color:#6b2b2d;color:var(--sup)}
+  /* 新股：历史不足 3 年。紫色，跟绿(过关)/黄(观察)/红(失败)都不撞——它既不是过关
+     也不是失败，是「这张卡背后的样本很薄」。不到 53 周的连信号都算不出来 */
+  .dc.yg{background:rgba(163,113,247,.14);border-color:#8957e5;color:#d2a8ff}
+  :root[data-theme="light"] .dc.yg{background:rgba(137,87,229,.10);color:#6639ba;font-weight:600}
   /* 回踩区间的价位：红底，跟图上那个红色虚线框对上 */
   .bandpx{background:rgba(242,85,90,.16);border:1px solid var(--sup);color:var(--sup);
     border-radius:4px;padding:1px 7px;font-family:var(--mono);font-weight:600;white-space:nowrap}
@@ -937,12 +941,21 @@ function card(i,p,always){
     : pu.state==='deep' ? `<span class="dc wait">回踩偏深 ${pu.day.slice(5)}</span>`
     : pu.state==='wait' ? `<span class="dc wait">回踩 ${pu.have}/${pu.want} 日</span>`
     : `<span class="dc">未回踩</span>`;
+  // 「新股 N 周」牌子（纯显示，不进 scan，不进通知）。判定要看前 52 周的最低价，
+  // 所以历史不到 53 周的股票在这块板子上永远是「十年内无」——那是对的，不是漏算，
+  // 这个牌子就是为了让人一眼看出原因，不然只会以为数据坏了。
+  // （上游 MIN_BARS 从 60 放到 8 之后，2025 年之后上市的那 41 只才进得来。）
+  // 顺带记住实测：历史越短表现越差，按进场月份等权 <52周 −2.80%、52–77周 −4.51%
+  //（失守率 47.6%），78–155周 −2.36%，≥156周 −0.29%，单调。
+  const yg = (d.w&&d.w.length<156)
+    ? `<span class="dc yg" title="这只股只有 ${d.w.length} 周（约 ${Math.round(d.w.length/52*10)/10} 年）历史，最早一根 ${d.w[0][0]}。${d.w.length<53?'不到 53 周，52 周的支撑窗口填不满，所以这里永远没有信号。':''}历史越短表现越差：按进场月份等权，历史<52周 −2.80%、52–77周 −4.51%（失守率 47.6%），≥156周 −0.29%。这只是标记，不影响判定。">新股 ${d.w.length} 周</span>`
+    : '';
   return `<div class="card${s&&s.ago<=p.recentWeeks?' hot':''}" data-i="${i}">
     <div class="ch">
       <div><div class="nm">${esc(d.n)}</div><div class="sy">${d.sym} · ${esc(d.i||d.s)}</div></div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
         <button class="star${WATCH.has(d.t)?' on':''}" title="加入/移出观察清单">${WATCH.has(d.t)?'★':'☆'}</button>
-        <span class="wr${wrCls}" title="近52周典型周振幅">振幅 ${d.wr}%</span>${dcb}${pub}${badge}</div>
+        <span class="wr${wrCls}" title="近52周典型周振幅">振幅 ${d.wr}%</span>${yg}${dcb}${pub}${badge}</div>
     </div>
     <div class="cv">${chart(d.w,s,430,168,false,'w')}</div>
     ${s?`<div class="st">
