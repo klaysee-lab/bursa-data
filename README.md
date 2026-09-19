@@ -2,8 +2,8 @@
 
 马股 59 只（KLCI 30 + 科技 30）的行情数据，每个交易日自动抓取。
 
-这个仓库**只是一个数据中转站**，没有界面。看板本身在别处：
-https://claude.ai/code/artifact/a8d2f333-4a0a-4810-b46f-4b18f67ea0d4
+仓库现在也包含一个可本地运行的扫描 dashboard：`dashboard.html`。它不会伪造实时数据，
+默认读取 `data/meta.json`、周线/日线分片与 `symbols.json`，数据来源和快照时间会在页面显示。
 
 ## 为什么需要它
 
@@ -49,6 +49,22 @@ GitHub Actions (09:10 UTC / 17:10 马时)  →  data/*.json
 ## 手动触发
 
 Actions 页 → Fetch Bursa prices → Run workflow。
+
+## 本地运行 dashboard
+
+```bash
+python -m http.server 8000
+```
+
+然后打开 <http://localhost:8000/dashboard.html>。浏览器直接打开 `file://` 会被 CORS
+阻止分片读取。CSV 可使用 TradingView/KL Screener 的 `date,open,high,low,close,volume`
+列；导入时输入对应 Bursa 代码。JSON 可传入 `{ "symbols": [...], "weekly": {...},
+"daily": {...} }`，K 线数组格式为 `[日期, 开, 高, 低, 收, 成交量]`。
+
+扫描规则在 `scanner.js`：周线必须先跌破过去 N 周支撑、在容忍度内打底并收盘收复；
+日线必须回踩守支撑且缩量，再突破近 5 日压力。连续下降高低点或失守破底低点会扣分。
+`symbols.json` 的 `g`（现有 KLCI/科技标签）或可选 `tier` 字段决定龙头/二线/三线，
+这是筛选标签而非市场排名。
 
 ## template.html
 

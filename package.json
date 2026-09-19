@@ -1,0 +1,8 @@
+{
+  "name": "bursa-breakout-scanner",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test_scanner.mjs"
+  }
+}
