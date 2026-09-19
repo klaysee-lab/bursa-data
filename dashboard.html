@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>马股破底翻扫描器</title>
+  <style>
+    :root{font-family:Inter,"Segoe UI",sans-serif;color:#17202b;background:#f4f7fb;--card:#fff;--line:#dbe3ee;--muted:#68788d;--blue:#1769e0;--good:#087f5b;--bad:#c92a2a;--wait:#986b00}
+    *{box-sizing:border-box}body{margin:0}.app{max-width:1500px;margin:auto;padding:24px}
+    header{display:flex;justify-content:space-between;gap:20px;align-items:flex-start;flex-wrap:wrap}h1{margin:0 0 6px;font-size:28px}p{margin:4px 0;color:var(--muted);font-size:13px}
+    .actions{display:flex;gap:8px;flex-wrap:wrap}.button,.select,input{border:1px solid var(--line);background:var(--card);padding:9px 11px;border-radius:7px;font:inherit}.button{cursor:pointer}.primary{background:var(--blue);color:white;border-color:var(--blue)}
+    .notice{margin:18px 0;padding:11px 14px;border:1px solid #f0d98c;background:#fff9df;border-radius:8px;font-size:12px;color:#765900}
+    .controls,.stats,.grid{display:grid;gap:12px}.controls{grid-template-columns:1.2fr repeat(3,minmax(140px,1fr));margin:16px 0}.controls label{font-size:11px;color:var(--muted);display:flex;flex-direction:column;gap:5px}
+    .stats{grid-template-columns:repeat(5,1fr);margin:14px 0}.stat,.panel{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}.stat b{display:block;font-size:24px;margin-bottom:2px}.stat span{font-size:12px;color:var(--muted)}
+    .grid{grid-template-columns:repeat(auto-fill,minmax(330px,1fr));margin-top:14px}.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;cursor:pointer}.card:hover{border-color:var(--blue);box-shadow:0 3px 12px #29476d18}.top{display:flex;justify-content:space-between;gap:10px}.name{font-weight:700}.symbol{font:12px ui-monospace;color:var(--muted)}.badge{border-radius:12px;padding:3px 8px;font-size:11px;white-space:nowrap}.entry{background:#d9f7ed;color:var(--good)}.pullback,.reclaimed{background:#e3efff;color:#1456ab}.invalid{background:#ffe3e3;color:var(--bad)}.none,.waiting,.insufficient{background:#f0f2f5;color:#596779}
+    .tier{display:inline-block;margin-top:10px;padding:3px 7px;border-radius:4px;background:#eef2f7;font-size:11px}.meter{height:6px;background:#edf0f4;border-radius:4px;margin:12px 0 8px;overflow:hidden}.meter i{display:block;height:100%;background:var(--blue)}.dates{display:grid;grid-template-columns:repeat(2,1fr);gap:6px;font-size:11px;color:var(--muted)}.dates b{display:block;color:#26384e;font-weight:600;margin-top:2px}
+    .empty{padding:30px;text-align:center;color:var(--muted);grid-column:1/-1}.modal{position:fixed;inset:0;background:#142033aa;display:none;place-items:center;padding:20px}.modal.on{display:grid}.dialog{background:var(--card);border-radius:12px;max-width:900px;width:100%;max-height:92vh;overflow:auto;padding:20px}.modalhead{display:flex;justify-content:space-between}.close{border:0;background:none;font-size:24px;cursor:pointer}canvas{width:100%;height:300px;border:1px solid var(--line);border-radius:6px;margin-top:12px}.legend{font-size:12px;color:var(--muted);line-height:1.7}.small{font-size:11px;color:var(--muted)}@media(max-width:800px){.controls,.stats{grid-template-columns:1fr 1fr}.app{padding:14px}}@media(max-width:500px){.stats{grid-template-columns:1fr 1fr}.controls{grid-template-columns:1fr}}
+  </style>
+</head>
+<body><main class="app">
+  <header><div><h1>马股「破底翻」扫描 Dashboard</h1><p>周线破底→打底→收复，配合日线缩量回踩与短线突破；仅使用本地导入或仓库快照。</p></div>
+    <div class="actions"><label class="button primary">导入 CSV/JSON<input id="file" type="file" accept=".csv,.json" hidden></label><button class="button" id="reload">重新载入快照</button></div>
+  </header>
+  <div class="notice">技术筛选工具，不构成投资建议。当前快照来源和时间会显示在下方；没有实时 API 时不会伪造实时价格。龙头/二线/三线是可配置的筛选标签，不代表交易所或市值排名。</div>
+  <section class="controls"><label>搜索股票<input id="search" placeholder="代码、名称或板块"></label><label>分类<select id="tier"><option value="">全部分类</option><option>龙头股</option><option>二线股</option><option>三线股</option></select></label><label>状态<select id="status"><option value="">全部状态</option><option value="entry">潜在买入</option><option value="pullback">回踩观察</option><option value="reclaimed">周线已翻</option><option value="invalid">结构失效</option><option value="none">暂无信号</option><option value="insufficient">数据不足</option></select></label><label>排序<select id="sort"><option value="score">评分优先</option><option value="recent">翻转日期</option><option value="symbol">代码</option></select></label></section>
+  <section class="stats"><div class="stat"><b id="count">—</b><span>扫描股票</span></div><div class="stat"><b id="entryCount">—</b><span>潜在买入</span></div><div class="stat"><b id="pullCount">—</b><span>回踩观察</span></div><div class="stat"><b id="recentCount">—</b><span>近 6 周翻转</span></div><div class="stat"><b id="source">—</b><span>数据快照</span></div></section>
+  <p id="meta" class="small"></p><div id="grid" class="grid"></div>
+  <p class="legend">规则：周线以过去 N 周最低点为支撑；必须真实跌破后连续打底，期间不得超出容忍度再创新低，并以收盘价重新站上支撑确认翻转。日线则要求回踩守住支撑且量能低于均量，再突破近 5 日压力；连续下降高低点、失守破底低点计负分。导入格式见 README。</p>
+</main>
+<div id="modal" class="modal"><div class="dialog"><div class="modalhead"><div id="title"></div><button class="close" id="close">×</button></div><canvas id="chart" width="860" height="300"></canvas><div id="detail" class="legend"></div></div></div>
+<script type="module">
+import { DEFAULT_PARAMS, scanStock } from "./scanner.js";
+const $ = id => document.getElementById(id);
+let state = { symbols: [], weekly: {}, daily: {}, meta: {}, rows: [] };
+const labels = { entry:"潜在买入", pullback:"回踩观察", reclaimed:"周线已翻", invalid:"结构失效", none:"暂无信号", insufficient:"数据不足", waiting:"等待确认" };
+const tierOf = s => s.tier || (s.g === "klci" ? "龙头股" : s.g === "tech" ? "二线股" : "三线股");
+const fmt = d => d || "—";
+async function json(path){ const r=await fetch(path); if(!r.ok) throw Error(`${path} ${r.status}`); return r.json(); }
+async function loadSnapshot(){
+  const meta = await json("data/meta.json"); const [symbols, ...chunks] = await Promise.all([json("symbols.json"), ...meta.chunks.w.map(x => json(`data/${x}`)), ...meta.chunks.d.map(x => json(`data/${x}`))]);
+  const w = {}, d = {}; let wi = 0;
+  for(const name of meta.chunks.w){ Object.assign(w, chunks[wi++]); }
+  for(const name of meta.chunks.d){ Object.assign(d, chunks[wi++]); }
+  state = { symbols, weekly:w, daily:d, meta, rows: [] }; rescan();
+}
+function rescan(){
+  state.rows = state.symbols.map(s => ({...s, tier:tierOf(s), result:scanStock(s,state.weekly[s.sym],state.daily[s.sym],DEFAULT_PARAMS)}));
+  render();
+}
+function render(){
+  const q = $("search").value.toLowerCase(), tier = $("tier").value, status = $("status").value, sort = $("sort").value;
+  let rows = state.rows.filter(r => (!q || `${r.t} ${r.n} ${r.s}`.toLowerCase().includes(q)) && (!tier || r.tier === tier) && (!status || r.result.status === status));
+  rows.sort((a,b) => sort === "symbol" ? a.t.localeCompare(b.t) : sort === "recent" ? (b.result.week.reclaimDate||"").localeCompare(a.result.week.reclaimDate||"") : b.result.score - a.result.score);
+  $("count").textContent = rows.length; $("entryCount").textContent = state.rows.filter(r=>r.result.status==="entry").length; $("pullCount").textContent = state.rows.filter(r=>r.result.status==="pullback").length; $("recentCount").textContent = state.rows.filter(r=>r.result.week.weeksAgo != null && r.result.week.weeksAgo <= DEFAULT_PARAMS.recentWeeks).length;
+  $("source").textContent = state.meta.snap || "导入";
+  const hasVolume = state.rows.some(r => (state.daily[r.sym] || []).some(b => b.length > 5 && Number.isFinite(+b[5]) && +b[5] > 0));
+  $("meta").textContent = state.meta.generated_at ? `来源：仓库 data/ 快照 · 生成：${state.meta.generated_at} · ${state.meta.count || state.symbols.length} 个股票；分类依据：symbols.json 的 g/tier 字段（缺省按 KLCI=龙头、科技=二线、其余=三线）。${hasVolume ? "" : " 当前快照 K 线未提供成交量，量能条件只能在导入含 volume 的 OHLCV 后验证。"}` : "来源：用户导入文件";
+  $("grid").innerHTML = rows.length ? rows.map(card).join("") : '<div class="empty">没有符合筛选条件的股票；可清除筛选或导入更多数据。</div>';
+  document.querySelectorAll(".card").forEach(c => c.onclick = () => open(c.dataset.sym));
+}
+function card(r){
+  const x=r.result,w=x.week,d=x.day; const dates = w.status==="reclaimed" ? `<div>破底日<b>${fmt(w.breakDate)}</b></div><div>翻转确认<b>${fmt(w.reclaimDate)}</b></div><div>最低点<b>${fmt(w.lowDate)}</b></div><div>回踩日<b>${fmt(d.pullback?.date)}</b></div><div>潜在买入<b>${fmt(d.entry?.date)}</b></div><div>支撑<b>${w.support?.toFixed(3) || "—"}</b></div>` : `<div>周线状态<b>${labels[x.status]}</b></div><div>说明<b>${w.reason || d.reason}</b></div>`;
+  return `<article class="card" data-sym="${r.sym}"><div class="top"><div><div class="name">${r.t}</div><div class="symbol">${r.n} · ${r.s || "未分类"}</div></div><span class="badge ${x.status}">${labels[x.status] || x.status}</span></div><span class="tier">${r.tier}</span><div class="meter"><i style="width:${x.confidence}%"></i></div><div class="small">评分 ${x.score} · 置信度 ${x.confidence}%</div><div class="dates">${dates}</div></article>`;
+}
+function open(sym){
+  const r=state.rows.find(x=>x.sym===sym), x=r.result; $("title").innerHTML=`<h2>${r.t} <small class="symbol">${r.sym}</small></h2><p>${labels[x.status]} · ${x.week.reason || x.day.reason}</p>`; $("detail").innerHTML=`<p><b>分类：</b>${r.tier}（由 symbols.json 的 g/tier 配置）　<b>评分：</b>${x.score}　<b>数据：</b>${state.meta.snap || "导入"}</p><p><b>破底：</b>${fmt(x.week.breakDate)}　<b>翻转：</b>${fmt(x.week.reclaimDate)}　<b>回踩：</b>${fmt(x.day.pullback?.date)}　<b>潜在买入：</b>${fmt(x.day.entry?.date)}</p><p>${x.day.reason || ""}</p>`; draw(state.weekly[sym] || []); $("modal").classList.add("on");
+}
+function draw(bars){ const c=$("chart"),ctx=c.getContext("2d"), W=c.width,H=c.height; ctx.clearRect(0,0,W,H); if(!bars.length){ctx.fillText("没有周线数据",20,30);return} const s=bars.slice(-100), lo=Math.min(...s.map(x=>x[3])),hi=Math.max(...s.map(x=>x[2])), y=v=>H-20-(v-lo)/(hi-lo+0.0001)*(H-40); ctx.strokeStyle="#dbe3ee";ctx.fillStyle="#17202b";ctx.font="11px monospace"; for(let i=0;i<s.length;i++){const x=20+i*(W-40)/s.length,b=s[i],up=b[4]>=b[1];ctx.strokeStyle=up?"#087f5b":"#c92a2a";ctx.beginPath();ctx.moveTo(x,y(b[2]));ctx.lineTo(x,y(b[3]));ctx.stroke();ctx.fillStyle=up?"#087f5b":"#c92a2a";ctx.fillRect(x-3,y(Math.max(b[1],b[4])),6,Math.max(1,Math.abs(y(b[1])-y(b[4]))));} }
+async function importFile(file){ const text=await file.text(); if(file.name.endsWith(".json")){ const j=JSON.parse(text); if(j.symbols){state={...state,...j,meta:{}};rescan();return} const key=Object.keys(j)[0]; state.weekly[key]=j[key]; rescan(); return; } const lines=text.trim().split(/\r?\n/).map(x=>x.split(",").map(v=>v.trim().replace(/^"|"$/g,""))); const head=lines.shift().map(x=>x.toLowerCase()); const ix=k=>head.findIndex(x=>x===k||x.includes(k)); const bars=lines.map(x=>[x[ix("date")]||x[ix("time")],+x[ix("open")],+x[ix("high")],+x[ix("low")],+x[ix("close")],ix("volume")>=0?+x[ix("volume")]:null]); const sym=prompt("请输入该 CSV 的 Bursa 代码，例如 1155.KL"); if(!sym)return; state.weekly[sym]=bars; state.daily[sym]=bars; if(!state.symbols.find(x=>x.sym===sym))state.symbols.push({t:sym,sym,n:sym,g:"import"}); rescan(); }
+$("reload").onclick=()=>loadSnapshot().catch(e=>alert(`载入失败：${e.message}`)); $("file").onchange=e=>e.target.files[0]&&importFile(e.target.files[0]).catch(x=>alert(`导入失败：${x.message}`)); ["search","tier","status","sort"].forEach(id=>$(id).oninput=render); $("close").onclick=()=> $("modal").classList.remove("on"); $("modal").onclick=e=>{if(e.target.id==="modal")$("modal").classList.remove("on")}; loadSnapshot().catch(e=>{$("grid").innerHTML=`<div class="empty">无法载入快照：${e.message}<br>请用 HTTP 静态服务器打开，例如 <code>python -m http.server</code>。</div>`});
+</script></body></html>
